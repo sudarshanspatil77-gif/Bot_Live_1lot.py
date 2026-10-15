@@ -72,34 +72,50 @@ def is_market_open():
 
 def send_tg_fixed(text):
     try:
+        if len(text) > 200:
+            text = text[:200]
+        def get_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v:
+                    return v
+                v=os.getenv(k.lower())
+                if v:
+                    return v
+                v=os.getenv(k.upper())
+                if v:
+                    return v
+            return None
         if STATE["trades_today"]>=5:
             if not STATE["telegram_limit_sent"]:
-                token=os.getenv('TELEGRAM_BOT_TOKEN')
-                chat=os.getenv('TELEGRAM_CHAT_ID')
+                token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+                chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
                 if token and chat:
                     try:
-                        msg=f"🔕 5 Trades Complete - OFF - Five Rules SL Trail 15pt\nTrades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']} Open {STATE['open_price']} {STATE['selected_type']}"
+                        msg=f"5 Trades OFF {STATE['trades_today']}/5 P&L {STATE['pnl']:.0f}"
                         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
                         STATE["telegram_limit_sent"]=True
                         STATE["telegram_enabled"]=False
                     except: pass
-            return False, "Limit 5 Trades OFF"
-        if not STATE["telegram_enabled"]: return False, "Telegram Disabled After 5 Trades"
-        token=os.getenv('TELEGRAM_BOT_TOKEN')
-        chat=os.getenv('TELEGRAM_CHAT_ID')
-        if not token or not chat: return False, "TELEGRAM_BOT_TOKEN/CHAT_ID not set in Render Environment"
+            return False, "Limit OFF"
+        if not STATE["telegram_enabled"]: return False, "Disabled"
+        token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        if not token or not chat:
+            keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
+            return False, f"Token Missing Found Keys {keys}"
         try:
             r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
             if r.status_code==200:
                 STATE["telegram_ok"]=True
-                log("Telegram Sent OK Five Rules SL Trail 15pt")
-                return True, "Telegram Sent OK"
+                log("Telegram OK")
+                return True, "OK"
             else:
-                return False, f"Telegram Fail {r.status_code} {r.text[:150]}"
+                return False, f"Fail {r.status_code} {r.text[:100]}"
         except Exception as e:
-            return False, f"Telegram Error {e}"
+            return False, f"Err {e}"
     except Exception as e:
-        return False, f"Telegram Error {e}"
+        return False, f"Err {e}"
 
 def calc_ema(prices, length):
     try:
@@ -615,7 +631,7 @@ def api_candles():
                 STATE["sl"]=entry
                 STATE["sl_shifted"]=True
                 log(f"🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost | Entry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once! | Premium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Min 15 Point Up Side - Your Request! | Only Once!")
-                ok, msg = send_tg_fixed(f"🔄 *SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Your Request*\nEntry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once!\nPremium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Mini 15 Point Up Side\nH2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Fib 0.38 {STATE['fib_0_38']:.2f} Fib 0.5 {STATE['fib_0_5']:.2f} Fib 2.414 {STATE['fib_2_414']:.2f}\nOpen {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nRule 4 Updated: SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost\nShift Only Once! Cost to Cost! No Loss!")
+                ok, msg = send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
         
         return jsonify({
             "candles":clist[-80:],
@@ -736,87 +752,58 @@ def health():
 @app.route('/test_telegram')
 def test_telegram():
     try:
-        token=os.getenv('TELEGRAM_BOT_TOKEN')
-        chat=os.getenv('TELEGRAM_CHAT_ID')
+        def get_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v:
+                    return v
+                v=os.getenv(k.lower())
+                if v:
+                    return v
+                v=os.getenv(k.upper())
+                if v:
+                    return v
+            return None
+        token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
         if not token or not chat:
-            return jsonify({"ok":False,"msg":"TELEGRAM_BOT_TOKEN/CHAT_ID not set - Add in Render Environment","fix":"Render Dashboard -> Environment -> Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID","telegram":"False - Token Not Set"})
-        msg=f"""🔔 Test Telegram - Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - As Per Your Latest Request
-
-✅ Telegram Working! Latest Request Implemented!
-
-Your Latest Request: Update SL traling only one time after premium go up side mini 15 point trail SL cost to cost Option Premium chose by after market opening eg. open price 22500 Calculate trand Call side 22650(150 point up) Or put side 22350 (150 point down side)with 0.30 delta
-
-Implemented:
-
-📍 Option Premium Choose After Market Opening - Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request:
-
-Open Price 9:15 After Market Opening:
-Open Price {STATE['open_price']:.0f} Captured at {STATE['open_time']} - After Market Opening 9:15 AM
-NIFTY Spot Open Price at 9:15 - Store Open Price
-
-Trend Calculate After Opening:
-Trend {STATE['trend']} - Spot {STATE['spot']:.0f} vs Open {STATE['open_price']:.0f} = {STATE['spot']-STATE['open_price']:.0f}
-Spot > Open+20 = Bullish Up Side - Spot < Open-20 = Bearish Down Side - Calculate Trend After Opening
-
-Call Side 22650 (150 Point Up) With 0.30 Delta:
-Call Side {STATE['call_strike']} = Open {STATE['open_price']:.0f} +150 = {STATE['call_strike']} CE 0.30 Delta OTM
-OTM Call 150 point up - Delta 0.30 - When Trend Bullish Up Side Choose Call
-
-Put Side 22350 (150 Point Down) With 0.30 Delta:
-Put Side {STATE['put_strike']} = Open {STATE['open_price']:.0f} -150 = {STATE['put_strike']} PE 0.30 Delta OTM
-OTM Put 150 point down - Delta 0.30 - When Trend Bearish Down Side Choose Put
-
-Selected Option Premium - Trend Based - Only Premium - With 0.30 Delta:
-Selected {STATE['selected_type']} - Only Premium Trading - Trend Based - Open Price {STATE['open_price']:.0f} Example - 150 Point Up/Down 0.30 Delta - As Per Request!
-Only Premium - Selected Strike Premium Trading - NSE Live Last Price of Selected Strike With 0.30 Delta
-
-🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Request:
-
-SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost:
-Entry {STATE['entry']:.2f} SL {STATE['fib_0_38']:.2f} = L2+Range*0.38
-Premium Go Up Side Mini 15 Point = Entry +15 = {STATE['entry']:.2f} +15 = {STATE['entry']+15:.2f}
-When Premium Current Price {STATE['prem']:.2f} >= Entry+15 {STATE['entry']+15:.2f} Mini 15 Point Up Side YES!
-Then SL Trail to Cost to Cost = SL Shift to Entry {STATE['entry']:.2f} Cost to Cost Only One Time! Only Once!
-After Shift Risk Free! P&L 0 if SL Hit! No Loss! Safe! Only Once! - Your Latest Request!
-Shifted {STATE['sl_shifted']} - Only One Time!
-
-Five Most Important Rules - As Per Previous Request - Still Active:
-
-1. Fibonacci Level 0.5 Cross: Fib 0.5 {STATE['fib_0_5']:.2f} = L2+Range*0.5 Close {STATE['prem']:.2f} > Fib 0.5 & Prev <= Fib 0.5 = {STATE['fib_0_5_cross']}
-2. 20 EMA Cross Fib 0.50 Level: EMA20 {STATE['ema']:.2f} > Fib 0.5 {STATE['fib_0_5']:.2f} = {STATE['ema_cross_fib_0_5']}
-3. Green Candle Up Side on 20 EMA: Close >= Open Green & Close > EMA20 = {STATE['green_candle_upside_ema']}
-4. SL 0.38 Fib Level with Shift Only One Time Cost to Cost Premium Entry Price - Updated to 15 Point Trail: SL {STATE['fib_0_38']:.2f} Shift to Entry {STATE['entry']:.2f} Cost to Cost Only Once When Premium Up 15 Point = Entry+15 {STATE['entry']+15:.2f}
-5. Target 2.414: TGT {STATE['fib_2_414']:.2f} = L2+Range*2.414
-
-Combined Five Rules = Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA = {STATE['five_rules']} Buy {STATE['buyCondition']}
-
-Fib Draw H2 to L2 - Only Premium:
-H2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Range {STATE['fib_range_h2_l2']:.2f} Fib 0.38 SL {STATE['fib_0_38']:.2f} Fib 0.5 Entry {STATE['fib_0_5']:.2f} Fib 2.414 TGT {STATE['fib_2_414']:.2f}
-
-Levels - Only Premium - Latest:
-Entry {STATE['entry']:.2f} - Five Rules SL {STATE['sl']:.2f} {'Shifted to Entry '+str(STATE['entry'])+' Once! Cost to Cost 15pt Trail' if STATE['sl_shifted'] else 'Initial 0.38'} TGT 2.414 {STATE['target']:.2f} Trail Trigger Entry+15={STATE['entry']+15:.2f} Open {STATE['open_price']:.0f} {STATE['selected_type']}
-
-Why Best? Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta = Strongest Setup! Win Rate 75%+! Fake Breakout Kam! Safe! No Loss After 15pt Up!
-
-Live: EMA {STATE['ema']:.2f} Vol {STATE['volatility_percent']:.2f}% L1 {STATE['low1']} L2 {STATE['low2']} L3 {STATE['low3']} H2 {STATE['h2']} Neck {STATE['neckline']}
-Trades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']} Open {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta
-
-If you got this, Telegram ON - Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Message Yeil!
-
-Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request - Only Premium - Implemented - Deploy Fixed 100% Working!
-"""
-        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=15)
+            return jsonify({"ok":False,"msg":f"Token Missing Found {keys}","keys":keys,"telegram":"False - Check Render Env lowercase or uppercase"})
+        msg="Test OK Bot Working"
+        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
         if r.status_code==200:
-            log("Test Telegram Sent OK Latest Request")
             STATE["telegram_ok"]=True
-            return jsonify({"ok":True,"msg":"Telegram Sent! Latest Request - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Message Yeil - As Per Request Implemented","telegram":"True - Sent OK Latest","response":r.json()})
+            return jsonify({"ok":True,"msg":"Sent OK - Small 18 chars","telegram":"True","keys":keys,"token_len":len(token),"chat":chat})
         else:
-            return jsonify({"ok":False,"msg":f"Telegram Fail {r.status_code}","response":r.text[:500],"telegram":"False"})
+            return jsonify({"ok":False,"msg":f"Fail {r.status_code} {r.text[:100]}","keys":keys,"telegram":"False - API Fail"})
     except Exception as e:
-        log(f"Test Telegram ERR Latest {e}")
         import traceback
-        log(traceback.format_exc()[:300])
-        return jsonify({"ok":False,"error":str(e),"telegram":"False - Error"}),500
+        return jsonify({"ok":False,"error":str(e),"trace":traceback.format_exc()[:300],"telegram":"False - Error"}),500
+
+
+@app.route('/debug_token')
+def debug_token():
+    try:
+        def get_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v:
+                    return v
+                v=os.getenv(k.lower())
+                if v:
+                    return v
+                v=os.getenv(k.upper())
+                if v:
+                    return v
+            return None
+        tu=os.getenv('TELEGRAM_BOT_TOKEN'); tl=os.getenv('telegram_bot_token')
+        cu=os.getenv('TELEGRAM_CHAT_ID'); cl=os.getenv('telegram_chat_id')
+        tok=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        ch=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        return {"upper_token":bool(tu),"lower_token":bool(tl),"final_token":bool(tok),"len":len(tok) if tok else 0,"start":(tok[:12]+"...") if tok and len(tok)>12 else "Missing","upper_chat":bool(cu),"lower_chat":bool(cl),"chat":ch,"all_keys":[k for k in os.environ.keys() if 'telegram' in k.lower()]}
+    except Exception as e:
+        return {"error":str(e)}
+
 
 @app.route('/force_trade')
 def force_trade():
@@ -1120,7 +1107,7 @@ Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Poin
                     STATE["entry"]=entryPrice; STATE["sl"]=stopLoss; STATE["sl_shifted"]=False; STATE["target"]=target
                     TRADES.append({"no":STATE["trades_today"],"buy_price":entryPrice,"buy_time":now_str,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN Latest Request","pnl":0,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib05":STATE["fib_0_5"],"sl":stopLoss,"fib_0_38":STATE["fib_0_38"],"fib_2_414":STATE["fib_2_414"],"entry":entryPrice,"target":target,"fib05Cross":fib_0_5_cross,"emaCrossFib05":ema_cross_fib_0_5,"greenAboveEMA":green_candle_upside_ema,"fiveRules":five_rules,"sl_shifted":False})
                     log(f"🚀 BUY Latest | Trade {STATE['trades_today']}/5 | BUY @ {entryPrice:.2f} Open {STATE['open_price']:.0f} Trend {STATE['trend']} Selected {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta | Five Rules: Fib 0.5 Cross {fib_0_5_cross} EMA Cross Fib 0.5 {ema_cross_fib_0_5} Green Above EMA {green_candle_upside_ema} | SL 0.38 {STATE['fib_0_38']:.2f} Trail Entry+15={entryPrice+15:.2f} Cost to Cost Once | TGT 2.414 {STATE['fib_2_414']:.2f} | H2 {h2:.2f} L2 {l2:.2f} | Telegram Sending Latest...")
-                    ok, msg = send_tg_fixed(f"🎯 BUY {STATE['trades_today']}/5 - Latest Request - SL Trail 15pt + Option Choose Open 22500\nBUY @ {entryPrice:.2f} Open {STATE['open_price']:.0f} Trend {STATE['trend']} Selected {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nFive Rules: Fib 0.5 Cross {fib_0_5_cross} Fib 0.5 {STATE['fib_0_5']:.2f} EMA Cross Fib 0.5 {ema_cross_fib_0_5} EMA {ema:.2f} > Fib 0.5 Green Above EMA {green_candle_upside_ema}\nSL 0.38 {STATE['fib_0_38']:.2f} Trail Entry+15={entryPrice+15:.2f} Cost to Cost Once TGT 2.414 {STATE['fib_2_414']:.2f}\nH2 {h2:.2f} L2 {l2:.2f} Range {STATE['fib_range_h2_l2']:.2f}\nEntry {entryPrice:.2f} SL {stopLoss:.2f} TGT {target:.2f} RR 2.414\nTrades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']}\nLatest Request: SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta")
+                    ok, msg = send_tg_fixed(f"BUY {STATE['trades_today']}/5 @{entryPrice:.1f} {STATE['selected_type']}")
                     log(f"BUY Telegram Result Latest: {msg}")
                 
                 if STATE["pos"] is not None and not STATE["sl_shifted"]:
@@ -1132,7 +1119,7 @@ Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Poin
                         STATE["sl_shifted"]=True
                         STATE["pos"]["sl_shifted"]=True
                         log(f"🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost | Entry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once! | Premium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Min 15 Point Up Side - Your Request! | Only Once!")
-                        ok, msg = send_tg_fixed(f"🔄 *SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Request*\nEntry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once!\nPremium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Mini 15 Point Up Side\nH2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Fib 0.38 {STATE['fib_0_38']:.2f} Fib 0.5 {STATE['fib_0_5']:.2f} Fib 2.414 {STATE['fib_2_414']:.2f}\nOpen {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nRule 4 Updated: SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost\nShift Only Once! Cost to Cost! No Loss!")
+                        ok, msg = send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
                 
                 if STATE["pos"]:
                     curr_price=list(CANDLES)[-1]['c']
@@ -1146,7 +1133,7 @@ Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Poin
                         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
                             TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]="SL HIT Cost to Cost Entry Trail 15pt" if sl_shifted else "SL HIT 0.38 Fib Latest"; TRADES[-1]["pnl"]=round(pnl,0)
                         log(f"🔴 SL HIT Latest | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} | SL {STATE['pos']['sl']:.2f} {'Shifted to Entry Cost to Cost Once 15pt Trail' if sl_shifted else 'Fib 0.38 Initial'} | Telegram Sending...")
-                        ok, msg = send_tg_fixed(f"🔴 SL HIT {STATE['trades_today']}/5 - Latest Request\nSL {STATE['pos']['sl']:.2f} @ {curr_price:.2f} {'Shifted to Entry Cost to Cost Once! - 15pt Trail - Rule 4 Latest' if sl_shifted else 'Fib 0.38 Initial - Rule 4'}\nOpen {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nH2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Fib 0.38 {STATE['fib_0_38']:.2f} Fib 0.5 {STATE['fib_0_5']:.2f} Fib 2.414 {STATE['fib_2_414']:.2f}\nP&L Rs.{pnl:.0f} Total Rs.{STATE['pnl']:.0f} {'Cost to Cost - No Loss! Trail 15pt Once!' if sl_shifted else ''}\nLatest Request: SL Trail 15pt + Option Choose")
+                        ok, msg = send_tg_fixed(f"SL HIT @{curr_price:.1f} P&L {pnl:.0f}")
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
                     elif curr_price >= STATE["pos"]["target"]:
@@ -1156,7 +1143,7 @@ Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Poin
                         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
                             TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=f"TGT HIT 2.414 Latest"; TRADES[-1]["pnl"]=round(pnl,0)
                         log(f"🟢 TGT HIT 2.414 Latest | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} | TGT {STATE['pos']['target']:.2f} Fib 2.414 | Telegram Sending...")
-                        ok, msg = send_tg_fixed(f"🟢 TGT HIT 2.414 {STATE['trades_today']}/5 - Latest Request\nTGT 2.414 {STATE['pos']['target']:.2f} @ {curr_price:.2f}\nEntry {STATE['pos']['entry']:.2f} SL {STATE['pos']['sl']:.2f} {'Shifted to Entry Once 15pt Trail' if STATE['pos'].get('sl_shifted',False) else 'Fib 0.38 Initial'}\nOpen {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nH2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Fib 0.38 {STATE['fib_0_38']:.2f} Fib 0.5 {STATE['fib_0_5']:.2f} Fib 2.414 {STATE['fib_2_414']:.2f}\nP&L Rs.{pnl:.0f} Total Rs.{STATE['pnl']:.0f} RR 1:2.414 Big Profit!\nLatest Request: SL Trail 15pt + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta")
+                        ok, msg = send_tg_fixed(f"TGT HIT @{curr_price:.1f} P&L {pnl:.0f}")
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
                 
