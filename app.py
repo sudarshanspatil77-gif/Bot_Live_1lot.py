@@ -917,54 +917,28 @@ def force_sell():
 
 def bot_loop_latest():
     try:
-        log("🚀 BOT START Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - Five Rules - Only Premium - 100% Working - Telegram ON")
+        log("BOT START - Market Opening Price Pasun 150pt Delta 0.30")
         time.sleep(3)
-        ok, msg = send_tg_fixed(f"""🚀 Bot Started - Latest Request - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - As Per Request - 100% Working
-
-Your Latest Request: Update SL traling only one time after premium go up side mini 15 point trail SL cost to cost Option Premium chose by after market opening eg. open price 22500 Calculate trand Call side 22650(150 point up) Or put side 22350 (150 point down side)with 0.30 delta
-
-Implemented:
-
-📍 Option Premium Choose After Market Opening - Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request:
-
-Open Price 9:15 After Market Opening: Open Price {STATE['open_price']:.0f} Captured at {STATE['open_time']} - After Market Opening 9:15 AM
-Trend Calculate After Opening: Trend {STATE['trend']} - Spot {STATE['spot']:.0f} vs Open {STATE['open_price']:.0f} = {STATE['spot']-STATE['open_price']:.0f}
-Call Side 22650 (150 Point Up) With 0.30 Delta: Call Side {STATE['call_strike']} = Open {STATE['open_price']:.0f} +150 = {STATE['call_strike']} CE 0.30 Delta OTM
-Put Side 22350 (150 Point Down) With 0.30 Delta: Put Side {STATE['put_strike']} = Open {STATE['open_price']:.0f} -150 = {STATE['put_strike']} PE 0.30 Delta OTM
-Selected Option Premium - Trend Based - Only Premium - With 0.30 Delta: Selected {STATE['selected_type']} - Only Premium Trading - Trend Based - Open Price {STATE['open_price']:.0f} Example - 150 Point Up/Down 0.30 Delta - As Per Request!
-
-🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Request:
-
-SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost:
-Entry {STATE['entry']:.2f} SL {STATE['fib_0_38']:.2f} = L2+Range*0.38
-Premium Go Up Side Mini 15 Point = Entry+15 = {STATE['entry']:.2f}+15={STATE['entry']+15:.2f}
-When Premium Current Price >= Entry+15 {STATE['entry']+15:.2f} Mini 15 Point Up Side Then SL Trail to Cost to Cost = SL Shift to Entry {STATE['entry']:.2f} Cost to Cost Only One Time! Only Once! After Shift Risk Free! No Loss! - Your Latest Request!
-Shifted {STATE['sl_shifted']} - Only One Time!
-
-Five Most Important Rules - As Per Previous Request - Still Active:
-1. Fibonacci Level 0.5 Cross: Fib 0.5 {STATE['fib_0_5']:.2f} = L2+Range*0.5
-2. 20 EMA Cross Fib 0.50 Level: EMA20 {STATE['ema']:.2f} > Fib 0.5 {STATE['fib_0_5']:.2f}
-3. Green Candle Up Side on 20 EMA: Close >= Open Green & Close > EMA20
-4. SL 0.38 Fib Level with Shift Only One Time Cost to Cost Premium Entry Price - Updated to 15 Point Trail
-5. Target 2.414: TGT {STATE['fib_2_414']:.2f} = L2+Range*2.414
-
-Combined Five Rules = Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA = {STATE['five_rules']}
-Buy {STATE['buyCondition']}
-
-Fib Draw H2 to L2 - Only Premium: H2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Range {STATE['fib_range_h2_l2']:.2f} Fib 0.38 SL {STATE['fib_0_38']:.2f} Fib 0.5 Entry {STATE['fib_0_5']:.2f} Fib 2.414 TGT {STATE['fib_2_414']:.2f}
-Levels: Entry {STATE['entry']:.2f} SL {STATE['sl']:.2f} TGT 2.414 {STATE['target']:.2f} Trail Trigger Entry+15={STATE['entry']+15:.2f} Open {STATE['open_price']:.0f} {STATE['selected_type']}
-Trades 0/5 P&L Rs.{STATE['pnl']}
-
-Why Best? Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta = Strongest Setup! Win Rate 75%+! Fake Breakout Kam! Safe! No Loss After 15pt Up! Option Choose With 0.30 Delta!
-
-Telegram ON - Latest Request - Har trade la message yeil! - As Per Request!
-Use /force_buy to test - OK True Yeil - Latest Request Message Yeil!
-
-Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request - Only Premium - Five Rules - Implemented - Deploy Fixed 100% Working!
-""")
-        log(f"Startup Telegram Result Latest: {msg}")
+        today_str=datetime.now(IST).strftime("%Y-%m-%d")
+        last_started=STATE.get("last_bot_started_date")
+        if last_started!=today_str:
+            ok, msg = send_tg_fixed(f"Bot Started {STATE['open_price']:.0f} {STATE['selected_type']}")
+            STATE["last_bot_started_date"]=today_str
+            log(f"Bot Started once today {today_str}: {msg}")
+        else:
+            log(f"Bot Started already sent today {today_str}")
         while True:
             try:
+                is_open, market_msg, is_limit = is_market_open()
+                if not is_open:
+                    if is_limit:
+                        log(f"{market_msg} - OFF - Sleeping 60s")
+                        time.sleep(60)
+                        continue
+                    log(f"{market_msg} - Sleeping 30s")
+                    time.sleep(30)
+                    continue
+
                 is_open, market_msg, is_limit = is_market_open()
                 if not is_open:
                     if is_limit:
