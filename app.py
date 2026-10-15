@@ -72,32 +72,41 @@ def is_market_open():
 
 def send_tg_fixed(text):
     try:
+        # ULTRA SMALL - Fix message too long + lowercase uppercase both
+        if len(text) > 200:
+            text = text[:200]
+        # Get token - Check both uppercase and lowercase - Render case sensitive!
+        def get_env(key_upper, key_lower):
+            return os.getenv(key_upper) or os.getenv(key_lower) or os.getenv(key_upper.lower()) or os.getenv(key_lower.lower())
         if STATE["trades_today"]>=5:
             if not STATE["telegram_limit_sent"]:
-                token=os.getenv('TELEGRAM_BOT_TOKEN')
-                chat=os.getenv('TELEGRAM_CHAT_ID')
+                token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+                chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
                 if token and chat:
                     try:
-                        msg=f"🔕 5 Trades Complete - OFF - Five Rules SL Trail 15pt\nTrades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']} Open {STATE['open_price']} {STATE['selected_type']}"
+                        msg=f"5 Trades OFF {STATE['trades_today']}/5 P&L {STATE['pnl']:.0f}"
                         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
                         STATE["telegram_limit_sent"]=True
                         STATE["telegram_enabled"]=False
                     except: pass
-            return False, "Limit 5 Trades OFF"
-        if not STATE["telegram_enabled"]: return False, "Telegram Disabled After 5 Trades"
-        token=os.getenv('TELEGRAM_BOT_TOKEN')
-        chat=os.getenv('TELEGRAM_CHAT_ID')
-        if not token or not chat: return False, "TELEGRAM_BOT_TOKEN/CHAT_ID not set in Render Environment"
-        try:
-            r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
-            if r.status_code==200:
-                STATE["telegram_ok"]=True
-                log("Telegram Sent OK Five Rules SL Trail 15pt")
-                return True, "Telegram Sent OK"
-            else:
-                return False, f"Telegram Fail {r.status_code} {r.text[:150]}"
-        except Exception as e:
-            return False, f"Telegram Error {e}"
+            return False, "Limit OFF"
+        if not STATE["telegram_enabled"]: return False, "Disabled"
+        token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        if not token or not chat:
+            # Debug - show what env keys exist
+            env_keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
+            return False, f"Token Missing - Found keys: {env_keys}"
+        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
+        if r.status_code==200:
+            STATE["telegram_ok"]=True
+            log("Telegram OK Small")
+            return True, "OK"
+        else:
+            return False, f"Fail {r.status_code} {r.text[:100]}"
+    except Exception as e:
+        return False, f"Err {e}"
+
     except Exception as e:
         return False, f"Telegram Error {e}"
 
@@ -736,87 +745,49 @@ def health():
 @app.route('/test_telegram')
 def test_telegram():
     try:
-        token=os.getenv('TELEGRAM_BOT_TOKEN')
-        chat=os.getenv('TELEGRAM_CHAT_ID')
+        token=os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('telegram_bot_token')
+        chat=os.getenv('TELEGRAM_CHAT_ID') or os.getenv('telegram_chat_id')
+        env_keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
         if not token or not chat:
-            return jsonify({"ok":False,"msg":"TELEGRAM_BOT_TOKEN/CHAT_ID not set - Add in Render Environment","fix":"Render Dashboard -> Environment -> Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID","telegram":"False - Token Not Set"})
-        msg=f"""🔔 Test Telegram - Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - As Per Your Latest Request
-
-✅ Telegram Working! Latest Request Implemented!
-
-Your Latest Request: Update SL traling only one time after premium go up side mini 15 point trail SL cost to cost Option Premium chose by after market opening eg. open price 22500 Calculate trand Call side 22650(150 point up) Or put side 22350 (150 point down side)with 0.30 delta
-
-Implemented:
-
-📍 Option Premium Choose After Market Opening - Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request:
-
-Open Price 9:15 After Market Opening:
-Open Price {STATE['open_price']:.0f} Captured at {STATE['open_time']} - After Market Opening 9:15 AM
-NIFTY Spot Open Price at 9:15 - Store Open Price
-
-Trend Calculate After Opening:
-Trend {STATE['trend']} - Spot {STATE['spot']:.0f} vs Open {STATE['open_price']:.0f} = {STATE['spot']-STATE['open_price']:.0f}
-Spot > Open+20 = Bullish Up Side - Spot < Open-20 = Bearish Down Side - Calculate Trend After Opening
-
-Call Side 22650 (150 Point Up) With 0.30 Delta:
-Call Side {STATE['call_strike']} = Open {STATE['open_price']:.0f} +150 = {STATE['call_strike']} CE 0.30 Delta OTM
-OTM Call 150 point up - Delta 0.30 - When Trend Bullish Up Side Choose Call
-
-Put Side 22350 (150 Point Down) With 0.30 Delta:
-Put Side {STATE['put_strike']} = Open {STATE['open_price']:.0f} -150 = {STATE['put_strike']} PE 0.30 Delta OTM
-OTM Put 150 point down - Delta 0.30 - When Trend Bearish Down Side Choose Put
-
-Selected Option Premium - Trend Based - Only Premium - With 0.30 Delta:
-Selected {STATE['selected_type']} - Only Premium Trading - Trend Based - Open Price {STATE['open_price']:.0f} Example - 150 Point Up/Down 0.30 Delta - As Per Request!
-Only Premium - Selected Strike Premium Trading - NSE Live Last Price of Selected Strike With 0.30 Delta
-
-🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Request:
-
-SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost:
-Entry {STATE['entry']:.2f} SL {STATE['fib_0_38']:.2f} = L2+Range*0.38
-Premium Go Up Side Mini 15 Point = Entry +15 = {STATE['entry']:.2f} +15 = {STATE['entry']+15:.2f}
-When Premium Current Price {STATE['prem']:.2f} >= Entry+15 {STATE['entry']+15:.2f} Mini 15 Point Up Side YES!
-Then SL Trail to Cost to Cost = SL Shift to Entry {STATE['entry']:.2f} Cost to Cost Only One Time! Only Once!
-After Shift Risk Free! P&L 0 if SL Hit! No Loss! Safe! Only Once! - Your Latest Request!
-Shifted {STATE['sl_shifted']} - Only One Time!
-
-Five Most Important Rules - As Per Previous Request - Still Active:
-
-1. Fibonacci Level 0.5 Cross: Fib 0.5 {STATE['fib_0_5']:.2f} = L2+Range*0.5 Close {STATE['prem']:.2f} > Fib 0.5 & Prev <= Fib 0.5 = {STATE['fib_0_5_cross']}
-2. 20 EMA Cross Fib 0.50 Level: EMA20 {STATE['ema']:.2f} > Fib 0.5 {STATE['fib_0_5']:.2f} = {STATE['ema_cross_fib_0_5']}
-3. Green Candle Up Side on 20 EMA: Close >= Open Green & Close > EMA20 = {STATE['green_candle_upside_ema']}
-4. SL 0.38 Fib Level with Shift Only One Time Cost to Cost Premium Entry Price - Updated to 15 Point Trail: SL {STATE['fib_0_38']:.2f} Shift to Entry {STATE['entry']:.2f} Cost to Cost Only Once When Premium Up 15 Point = Entry+15 {STATE['entry']+15:.2f}
-5. Target 2.414: TGT {STATE['fib_2_414']:.2f} = L2+Range*2.414
-
-Combined Five Rules = Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA = {STATE['five_rules']} Buy {STATE['buyCondition']}
-
-Fib Draw H2 to L2 - Only Premium:
-H2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Range {STATE['fib_range_h2_l2']:.2f} Fib 0.38 SL {STATE['fib_0_38']:.2f} Fib 0.5 Entry {STATE['fib_0_5']:.2f} Fib 2.414 TGT {STATE['fib_2_414']:.2f}
-
-Levels - Only Premium - Latest:
-Entry {STATE['entry']:.2f} - Five Rules SL {STATE['sl']:.2f} {'Shifted to Entry '+str(STATE['entry'])+' Once! Cost to Cost 15pt Trail' if STATE['sl_shifted'] else 'Initial 0.38'} TGT 2.414 {STATE['target']:.2f} Trail Trigger Entry+15={STATE['entry']+15:.2f} Open {STATE['open_price']:.0f} {STATE['selected_type']}
-
-Why Best? Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta = Strongest Setup! Win Rate 75%+! Fake Breakout Kam! Safe! No Loss After 15pt Up!
-
-Live: EMA {STATE['ema']:.2f} Vol {STATE['volatility_percent']:.2f}% L1 {STATE['low1']} L2 {STATE['low2']} L3 {STATE['low3']} H2 {STATE['h2']} Neck {STATE['neckline']}
-Trades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']} Open {STATE['open_price']:.0f} {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta
-
-If you got this, Telegram ON - Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Message Yeil!
-
-Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request - Only Premium - Implemented - Deploy Fixed 100% Working!
-"""
-        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=15)
+            return jsonify({"ok":False,"msg":f"Token Missing Found keys {env_keys}","env_keys":env_keys,"token_present":bool(token),"chat_present":bool(chat),"telegram":"False"})
+        # Ultra small - 18 chars
+        msg="Test OK Bot Working"
+        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
         if r.status_code==200:
-            log("Test Telegram Sent OK Latest Request")
             STATE["telegram_ok"]=True
-            return jsonify({"ok":True,"msg":"Telegram Sent! Latest Request - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Message Yeil - As Per Request Implemented","telegram":"True - Sent OK Latest","response":r.json()})
+            return jsonify({"ok":True,"msg":"Sent OK","telegram":"True","env_keys":env_keys})
         else:
-            return jsonify({"ok":False,"msg":f"Telegram Fail {r.status_code}","response":r.text[:500],"telegram":"False"})
+            return jsonify({"ok":False,"msg":f"Fail {r.status_code} {r.text[:100]}","env_keys":env_keys,"telegram":"False"})
     except Exception as e:
-        log(f"Test Telegram ERR Latest {e}")
-        import traceback
-        log(traceback.format_exc()[:300])
-        return jsonify({"ok":False,"error":str(e),"telegram":"False - Error"}),500
+        return jsonify({"ok":False,"error":str(e),"telegram":"False"}),500
+
+
+@app.route('/debug_token')
+def debug_token():
+    try:
+        token_upper=os.getenv('TELEGRAM_BOT_TOKEN')
+        token_lower=os.getenv('telegram_bot_token')
+        chat_upper=os.getenv('TELEGRAM_CHAT_ID')
+        chat_lower=os.getenv('telegram_chat_id')
+        token=token_upper or token_lower
+        chat=chat_upper or chat_lower
+        return {
+            "token_upper_present": bool(token_upper),
+            "token_lower_present": bool(token_lower),
+            "token_final_present": bool(token),
+            "token_length": len(token) if token else 0,
+            "token_start": (token[:12]+"...") if token and len(token)>12 else "Missing",
+            "chat_upper_present": bool(chat_upper),
+            "chat_lower_present": bool(chat_lower),
+            "chat_final_present": bool(chat),
+            "chat_value": chat if chat else "Missing",
+            "all_telegram_keys": [k for k in os.environ.keys() if 'telegram' in k.lower()],
+            "all_keys": list(os.environ.keys())[:50],
+            "fix": "Set TELEGRAM_BOT_TOKEN uppercase OR lowercase telegram_bot_token both work now after fix"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @app.route('/force_trade')
 def force_trade():
