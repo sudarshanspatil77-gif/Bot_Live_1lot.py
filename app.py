@@ -867,67 +867,7 @@ def force_buy():
         TRADES.append({"no":STATE["trades_today"],"buy_price":curr,"buy_time":now,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN FORCE BUY Latest Request SL Trail 15pt + Option Choose","pnl":0,"strike":f"{STATE['strike']}{STATE['option_type']}","open_price":open_price,"call_strike":call_strike,"put_strike":put_strike,"selected_type":selected_type,"trend":trend,"h2":h2,"l2":l2,"range":fib_range,"fib05":fib_05,"sl":sl,"fib_0_38":fib_038,"fib_2_414":fib_2414,"entry":entry,"target":target,"fib05Cross":fib05_cross,"emaCrossFib05":ema_cross_fib05,"greenAboveEMA":green_above_ema,"fiveRules":five_rules,"sl_shifted":False})
         log(f"FORCE BUY Latest Request | Trade {STATE['trades_today']}/5 | BUY @ {curr:.2f} Open {open_price:.0f} Trend {trend} Selected {selected_type} Call {call_strike} Put {put_strike} 0.30 Delta | Five Rules: Fib 0.5 Cross {fib05_cross} Fib 0.5 {fib_05:.2f} EMA Cross Fib 0.5 {ema_cross_fib05} EMA {STATE['ema']:.2f} > Fib 0.5 Green Above EMA {green_above_ema} | SL 0.38 {fib_038:.2f} Trail Entry+15={entry+15:.2f} Cost to Cost Once | TGT 2.414 {fib_2414:.2f} | H2 {h2:.2f} L2 {l2:.2f} | Entry {entry:.2f} SL {sl:.2f} TGT {target:.2f} | {now} | Telegram Sending Latest...")
         
-        tg_msg=f"""🟢 FORCE BUY {STATE['trades_today']}/5 - Latest Request - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - NEW
-
-BUY @ {curr:.2f} - Latest Request - SL Trail 15pt + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta
-
-📍 Option Premium Choose After Market Opening - Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request:
-
-Open Price 9:15 After Market Opening: Open Price {open_price:.0f} Captured at {STATE['open_time']} - After Market Opening 9:15 AM
-Trend Calculate After Opening: Trend {trend} - Spot {STATE['spot']:.0f} vs Open {open_price:.0f} = {STATE['spot']-open_price:.0f}
-
-Call Side 22650 (150 Point Up) With 0.30 Delta: Call Side {call_strike} = Open {open_price:.0f} +150 = {call_strike} CE 0.30 Delta OTM
-
-Put Side 22350 (150 Point Down) With 0.30 Delta: Put Side {put_strike} = Open {open_price:.0f} -150 = {put_strike} PE 0.30 Delta OTM
-
-Selected Option Premium - Trend Based - Only Premium - With 0.30 Delta: Selected {selected_type} - Only Premium Trading - Trend Based - Open Price {open_price:.0f} Example - 150 Point Up/Down 0.30 Delta - As Per Request!
-Only Premium - Selected Strike Premium Trading
-
-Five Most Important Rules - As Per Previous Request:
-
-1. Fibonacci Level 0.5 Cross: Fib 0.5 = L2+Range*0.5 = {l2:.2f}+{fib_range:.2f}x0.5 = {fib_05:.2f} Close {curr:.2f} > Fib 0.5 {fib_05:.2f} & Prev <= Fib 0.5 = {fib05_cross} {'✅ YES Cross' if fib05_cross else '❌ NO'}
-
-2. 20 EMA Cross Fib 0.50 Level: EMA20 {STATE['ema']:.2f} > Fib 0.5 {fib_05:.2f} & Prev EMA <= Fib 0.5 = {ema_cross_fib05} {'✅ YES EMA Cross Fib 0.5' if ema_cross_fib05 else '❌ NO'}
-
-3. Green Candle Up Side on 20 EMA: Close {curr:.2f} >= Open Green & Close > EMA20 {STATE['ema']:.2f} = Green Above EMA = {green_above_ema} {'✅ YES Green Above EMA' if green_above_ema else '❌ NO'}
-
-4. SL 0.38 Fib Level with Shift Only One Time Cost to Cost Premium Entry Price - Updated to 15 Point Trail: SL = Fib 0.38 = L2+Range*0.38 = {l2:.2f}+{fib_range:.2f}x0.38 = {fib_038:.2f} Shift Only One Time Cost to Cost When Premium Up 15 Point = Entry {entry:.2f}+15={entry+15:.2f}
-
-5. Target 2.414: Target = L2+Range*2.414 = {l2:.2f}+{fib_range:.2f}x2.414 = {fib_2414:.2f} Big Profit!
-
-Combined Five Rules = Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA = {five_rules} {'✅ YES All Five Rules = BUY!' if five_rules else '❌ NO'}
-
-🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Latest Request:
-
-SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost:
-Entry {entry:.2f} SL {fib_038:.2f} = L2+Range*0.38
-Premium Go Up Side Mini 15 Point = Entry+15 = {entry:.2f}+15={entry+15:.2f}
-When Premium Current Price >= Entry+15 {entry+15:.2f} Mini 15 Point Up Side Then SL Trail to Cost to Cost = SL Shift to Entry {entry:.2f} Cost to Cost Only One Time! Only Once!
-After Shift Risk Free! P&L 0 if SL Hit! No Loss! Safe! Only Once! - Your Latest Request!
-
-Fib Draw H2 to L2 - Only Premium:
-H2 {h2:.2f} L2 {l2:.2f} Range {fib_range:.2f} Fib 0.38 SL {fib_038:.2f} Fib 0.5 Entry {fib_05:.2f} Fib 2.414 TGT {fib_2414:.2f}
-
-Levels - Only Premium - Latest:
-Entry: Close {entry:.2f} - Five Rules: Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA = BUY! - Previous Request
-SL: H2-L2 Fib 0.38 {sl:.2f} = L2+Range*0.38 - Initial SL 0.38 - Shift to Entry {entry:.2f} Cost to Cost Only Once When Premium Up 15 Point = Entry+15 {entry+15:.2f} - Latest Request - Rule 4 Updated!
-Risk: {risk:.2f}
-TGT: Fib 2.414 {target:.2f} = L2+Range*2.414 - Rule 5 Big Target! - Previous Request
-Reward: {target-entry:.2f}
-RR 1:{(target-entry)/risk:.2f} (Target 2.414)
-
-Open: {open_price:.0f} Trend {trend} Selected {selected_type} Call {call_strike} Put {put_strike} 0.30 Delta - Latest Request
-
-Status:
-Trades {STATE['trades_today']}/5 P&L Rs.{STATE['pnl']}
-Time {now}
-
-Latest Request - SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - As Per Request - Only Premium - H2-L2 Fib Draw - Five Rules!
-
-Why Best? Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta = Strongest Setup! Win Rate 75%+! Fake Breakout Kam! Safe! No Loss After 15pt Up! Option Choose With 0.30 Delta!
-
-Telegram ON - Latest Request - Message Yeil!
-"""
+        tg_msg=f"Trade {STATE['trades_today']}/5 P&L {STATE['pnl']:.0f}"
         ok, tg_result = send_tg_fixed(tg_msg)
         
         return jsonify({"ok":True,"msg":f"BUY {STATE['trades_today']}/5 @ {curr:.2f} Latest Request - Open {open_price:.0f} Trend {trend} Selected {selected_type} Call {call_strike} Put {put_strike} 0.30 Delta Five Rules Fib 0.5 Cross {fib05_cross} EMA Cross Fib 0.5 {ema_cross_fib05} Green Above EMA {green_above_ema} SL 0.38 {fib_038:.2f} Trail Entry+15={entry+15:.2f} Cost to Cost Once TGT 2.414 {fib_2414:.2f} - Telegram {tg_result}","telegram":tg_result,"trade":f"{STATE['trades_today']}/5","telegram_ok":ok,"latest_request":"SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta Implemented"})
@@ -975,22 +915,7 @@ def force_sell():
         
         log(f"SELL Latest {exit_type} @ {curr:.2f} P&L {pnl:.0f} Trade {STATE['trades_today']}/5 Open {open_price:.0f} {selected_type} H2 {h2:.2f} L2 {l2:.2f} Fib 0.38 SL {fib_038:.2f} Fib 0.5 {fib_05:.2f} Fib 2.414 TGT {fib_2414:.2f} {'Shifted to Entry Once 15pt Trail Cost to Cost' if sl_shifted else 'Initial SL 0.38'} Telegram Sending...")
         
-        tg_msg=f"""🔴 {exit_type} {STATE['trades_today']}/5 - Latest Request - SL Trail 15pt + Option Choose
-
-SELL @ {curr:.2f}
-Entry {entry:.2f}
-SL {sl:.2f} = {'Shifted to Entry '+str(entry)+' Cost to Cost Once! - 15pt Trail - Rule 4 Latest' if sl_shifted else 'Fib 0.38 = L2+Range*0.38 - Rule 4 Initial'}
-TGT 2.414 {tgt:.2f} = L2+Range*2.414 - Rule 5
-Open {open_price:.0f} {selected_type} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta
-H2 {h2:.2f} L2 {l2:.2f} Range {fib_range:.2f}
-Fib 0.38 {fib_038:.2f} Fib 0.5 {fib_05:.2f} Fib 2.414 {fib_2414:.2f}
-P&L Rs.{pnl:.0f} Total Rs.{STATE['pnl']:.0f} {'Cost to Cost - No Loss! Trail 15pt Once!' if sl_shifted else ''}
-Trades {STATE['trades_today']}/5
-Time {now}
-
-Latest Request:
-SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) With 0.30 Delta - Only Premium
-"""
+        tg_msg=f"{exit_type} @{curr:.1f} P&L {pnl:.0f}"
         ok, tg_result = send_tg_fixed(tg_msg)
         
         STATE["pos"]=None
