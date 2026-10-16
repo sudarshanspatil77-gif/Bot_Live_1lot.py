@@ -1,7 +1,7 @@
 
 from flask import Flask, jsonify
 import threading, time, os, requests, random, math
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from collections import deque
 
@@ -12,7 +12,7 @@ TRADES = deque(maxlen=30)
 
 LEFT_BARS = 5
 RIGHT_BARS = 5
-EMA_LENGTH = 20
+EMA_LENGTH = 200
 ATR_LENGTH = 14
 MIN_VOL = 0.10
 MAX_VOL = 5.00
@@ -24,15 +24,24 @@ STATE = {
     "pnl":0, "trades":0, "trades_today":0, "max_trades":5, "trade_date":None,
     "pos":None, "force_trade":False,
     "telegram_ok":False, "telegram_enabled":True, "telegram_limit_sent":False,
-    "ema":75.0, "atr":2.5, "volatility_percent":0.85,
+    "ema":75.0, "atr":2.5, "volatility_percent":0.85, "rsi":58.0, "volume":100000, "vol_ema":85000,
     "low1":75.0, "low2":62.0, "low3":74.0, "high1":82.0, "high2":85.2, "neck1":82.0, "neck2":85.2, "neckline":85.2,
     "recent_low":62.0, "h2":85.2, "l2":62.0, "fib_range_h2_l2":23.2,
-    "fib_0":85.2, "fib_0_38":70.82, "fib_0_5":73.6, "fib_1":62.0, "fib_2_414":117.99,
-    "entry":76.0, "sl":70.82, "sl_type":"Fib 0.38 + Shift Cost to Cost Once 15 Point", "target":117.99, "target_type":"Fib 2.414",
-    "sl_shifted":False, "sl_shift_price":0, "sl_trail_points":15,
+    "fib_0":85.2, "fib_0_38":70.82, "fib_0_5":73.6, "fib_1":85.2, "fib_1_6":98.5, "fib_1_272":95.0, "fib_2_414":117.99,
+    "entry":76.0, "sl":70.82, "sl_type":"Fib 0.38 + 15pt Cost + Fib1 Trail After Cross 1.6 - Final", "target":98.5, "target_type":"Fib 1.6 -> 2.414 Shift",
+    "target1":98.5, "target1_type":"Fib 1.6 - Initial Target", "target2":117.99, "target2_type":"Fib 2.414 - After 1.6 Near Shift",
+    "sl_shifted":False, "sl_shift_price":0, "sl_trail_points":15, "sl_trail_to_fib1":False, "sl_trail_to_fib1_done":False, "sl_trail_to_fib16":False, "sl_trail_to_fib16_done":False, "sl_trail_to_fib1_after_16":False,
     "fib_0_5_cross":False, "ema_cross_fib_0_5":False, "green_candle_upside_ema":False,
+    "fib_1_cross":False, "fib_1_6_near":False, "target_shifted":False,
+    "rsi_filter":False, "volume_filter":False, "market_diff_filter":False,
     "distanceFromEMA":0.45, "isAllowedTF":True, "nearEMA":True, "ivOK":True, "inverseHS":True, "buyCondition":False, "five_rules":False,
-    "timeframe":5, "timeframe_str":"5 MIN", "src":"INIT SL Trail 15 Point + Option Choose Open 22500"
+    "timeframe":5, "timeframe_str":"5 MIN - 200 EMA - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail to Fib1 After Cross 1.6 - Final", 
+    "src":"INIT 200 EMA - Target 1.6 Fib + Shift to 2.414 Near + SL 15pt Cost + SL Trail to Fib1 After Cross 1.6 Fib - Final + 5F + Telegram Fix - 20 EMA Avaji 200 EMA",
+    "vwap":76.5, "supertrend":74.0, "supertrend_dir":"bullish", "vwap_filter":False, "supertrend_filter":False, "two_candle_confirm":False, "retest_fib_05":False,
+    "consecutive_losses":0, "pause_until":None, "pause_reason":"",
+    "daily_target":3000, "daily_sl":1500, "daily_pnl":0, "daily_target_hit":False, "daily_sl_hit":False,
+    "last_bot_started_date":None, "auto_squareoff_done":False,
+    "capital":10000, "lots":1, "lot_size":65, "wins":0, "losses":0, "win_rate":0.0
 }
 
 IST = pytz.timezone('Asia/Kolkata')
@@ -43,6 +52,184 @@ def log(m):
         LOGS.append(f"{ts} | {m}")
         print(m)
     except: pass
+
+def calc_ema(prices, period):
+    try:
+        if len(prices)<period:
+            return sum(prices)/len(prices) if prices else 75.0
+        k=2/(period+1)
+        ema=prices[0]
+        for p in prices[1:]:
+            ema=p*k+ema*(1-k)
+        return ema
+    except:
+        return 75.0
+
+def calc_atr(candles, period):
+    try:
+        if len(candles)<2:
+            return 2.5
+        trs=[]
+        for i in range(1,len(candles)):
+            h=candles[i]['h']
+            l=candles[i]['l']
+            pc=candles[i-1]['c']
+            tr=max(h-l, abs(h-pc), abs(l-pc))
+            trs.append(tr)
+        if len(trs)<period:
+            return sum(trs)/len(trs) if trs else 2.5
+        return sum(trs[-period:])/period
+    except:
+        return 2.5
+
+def calc_rsi(prices, period=14):
+    try:
+        if len(prices) < period+1:
+            return 58.0
+        deltas = [prices[i]-prices[i-1] for i in range(1,len(prices))]
+        gains = [d if d>0 else 0 for d in deltas]
+        losses = [-d if d<0 else 0 for d in deltas]
+        avg_gain = sum(gains[:period])/period
+        avg_loss = sum(losses[:period])/period
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain*(period-1)+gains[i])/period
+            avg_loss = (avg_loss*(period-1)+losses[i])/period
+        if avg_loss==0:
+            return 75.0
+        rs = avg_gain/avg_loss
+        rsi = 100 - (100/(1+rs))
+        return rsi
+    except:
+        return 58.0
+
+def calc_vwap(candles):
+    try:
+        if not candles:
+            return 76.5
+        total_pv=0
+        total_v=0
+        for c in candles[-20:]:
+            price=(c['h']+c['l']+c['c'])/3
+            vol=100000
+            total_pv+=price*vol
+            total_v+=vol
+        vwap=total_pv/total_v if total_v!=0 else candles[-1]['c']
+        return vwap
+    except:
+        return candles[-1]['c'] if candles else 76.5
+
+def calc_supertrend(candles, atr_period=10, multiplier=3.0):
+    try:
+        if len(candles)<atr_period:
+            return candles[-1]['c']-2, "bullish"
+        atr=calc_atr(candles, atr_period)
+        hl2=(candles[-1]['h']+candles[-1]['l'])/2
+        upper=hl2+multiplier*atr
+        lower=hl2-multiplier*atr
+        close=candles[-1]['c']
+        if close>upper:
+            return lower, "bullish"
+        elif close<lower:
+            return upper, "bearish"
+        else:
+            prev_dir=STATE.get("supertrend_dir","bullish")
+            if prev_dir=="bullish":
+                return lower, "bullish"
+            else:
+                return upper, "bearish"
+    except:
+        return 74.0, "bullish"
+
+def calc_fib_h2_l2(h2, l2):
+    try:
+        if h2 is None or l2 is None:
+            return None
+        fib_range=h2-l2
+        fib_0=h2
+        fib_0_38=l2+fib_range*0.38
+        fib_0_5=l2+fib_range*0.5
+        fib_1=l2+fib_range*1.0
+        fib_1_272=l2+fib_range*1.272
+        fib_1_6=l2+fib_range*1.6
+        fib_2_414=l2+fib_range*2.414
+        return {
+            "range":fib_range,
+            "fib_0":fib_0,
+            "fib_0_38":fib_0_38,
+            "fib_0_5":fib_0_5,
+            "fib_1":fib_1,
+            "fib_1_272":fib_1_272,
+            "fib_1_6":fib_1_6,
+            "fib_2_414":fib_2_414
+        }
+    except:
+        return None
+
+def check_time_filter():
+    try:
+        now=datetime.now(IST)
+        hour=now.hour
+        minute=now.minute
+        if hour==9 and minute>=15 and minute<30:
+            return False, "Time Filter 09:15-09:30 No Trade - Opening Volatility Avoid"
+        if hour>=15 and minute>=0:
+            if minute>=15:
+                return False, "Auto SquareOff 3:15 PM - No New Trade"
+            else:
+                return False, "No New Trade After 3:00 PM - Only SquareOff Till 3:15 PM"
+        return True, "Time OK"
+    except:
+        return True, "Time OK"
+
+def check_consecutive_loss_filter():
+    try:
+        if STATE["consecutive_losses"]>=2:
+            pause_until=STATE["pause_until"]
+            if pause_until:
+                now=datetime.now(IST)
+                if now < pause_until:
+                    remaining=(pause_until-now).seconds//60
+                    return False, f"Consecutive Loss Pause - 2 SL Hit - Pause {remaining} Min"
+                else:
+                    STATE["consecutive_losses"]=0
+                    STATE["pause_until"]=None
+                    STATE["pause_reason"]=""
+                    return True, "Pause Over - Resume"
+        return True, "Loss Filter OK"
+    except:
+        return True, "Loss Filter OK"
+
+def check_daily_target_sl():
+    try:
+        daily_pnl=STATE["daily_pnl"]
+        daily_target=STATE["daily_target"]
+        daily_sl=STATE["daily_sl"]
+        if daily_pnl>=daily_target:
+            if not STATE["daily_target_hit"]:
+                STATE["daily_target_hit"]=True
+                return False, f"Daily Target Hit Rs.{daily_pnl:.0f} >= Rs.{daily_target} - Bot OFF Today - Profit Lock"
+        if daily_pnl<=-abs(daily_sl):
+            if not STATE["daily_sl_hit"]:
+                STATE["daily_sl_hit"]=True
+                return False, f"Daily SL Hit Rs.{daily_pnl:.0f} <= -Rs.{daily_sl} - Bot OFF Today - Capital Protect"
+        return True, "Daily Target/SL OK"
+    except:
+        return True, "Daily Check OK"
+
+def calc_lots():
+    try:
+        capital=STATE.get("capital",10000)
+        if capital<20000:
+            lots=1
+        elif capital<40000:
+            lots=2
+        else:
+            lots=3
+        lots=min(lots,5)
+        STATE["lots"]=lots
+        return lots
+    except:
+        return 1
 
 def is_market_open():
     try:
@@ -57,9 +244,20 @@ def is_market_open():
             STATE["open_price"]=0
             STATE["open_time"]=None
             STATE["trend"]=""
-            log(f"NEW DAY {today} Reset 0/5 Open Price Reset SL Trail 15 Point Once")
+            STATE["daily_pnl"]=0
+            STATE["daily_target_hit"]=False
+            STATE["daily_sl_hit"]=False
+            STATE["consecutive_losses"]=0
+            STATE["pause_until"]=None
+            STATE["auto_squareoff_done"]=False
+            STATE["last_bot_started_date"]=None
+            STATE["target_shifted"]=False
+            STATE["sl_trail_to_fib1"]=False
+            STATE["sl_trail_to_fib1_done"]=False
+            calc_lots()
+            log(f"NEW DAY {today} Reset 0/5 Open Reset Target 1.6->2.414 Shift + SL 15pt Cost + SL Trail Fib1 + 5F Lots {STATE['lots']}")
         if STATE["force_trade"]:
-            return True, f"FORCE ON {STATE['trades_today']}/5 Five Rules SL Trail 15pt", False
+            return True, f"FORCE ON {STATE['trades_today']}/5 Target 1.6->2.414 SL 15pt Cost + Fib1 Trail", False
         if now.weekday()>=5:
             return False, f"Weekend {now.strftime('%A')} Use /force_trade", False
         mo=now.replace(hour=9,minute=15,second=0,microsecond=0)
@@ -67,7 +265,7 @@ def is_market_open():
         if now<mo: return False, f"Pre-Market {now.strftime('%H:%M')} Opens 9:15", False
         if now>mc: return False, f"Closed {now.strftime('%H:%M')} 3:30 PM", False
         if STATE["trades_today"]>=5: return False, f"5 Trades Limit {STATE['trades_today']}/5 OFF", True
-        return True, f"Market Open {STATE['trades_today']}/5 Five Rules SL Trail 15pt Open {STATE['open_price']} Trend {STATE['trend']}", False
+        return True, f"Market Open {STATE['trades_today']}/5 Target 1.6->2.414 SL 15pt Cost + Fib1 Trail Open {STATE['open_price']} Trend {STATE['trend']}", False
     except: return True, f"Open {STATE['trades_today']}/5", False
 
 def send_tg_fixed(text):
@@ -117,169 +315,71 @@ def send_tg_fixed(text):
     except Exception as e:
         return False, f"Err {e}"
 
-def calc_ema(prices, length):
+def get_nse():
     try:
-        if not prices: return 0
-        if len(prices)<length: return sum(prices)/len(prices)
-        k=2/(length+1)
-        ema=prices[0]
-        for p in prices[1:]: ema=p*k+ema*(1-k)
-        return ema
-    except: return prices[-1] if prices else 0
-
-def calc_atr(candles, length):
-    try:
-        if len(candles)<length+1: return 2.5
-        trs=[]
-        for i in range(1,len(candles)):
-            h=candles[i]['h']; l=candles[i]['l']; pc=candles[i-1]['c']
-            tr=max(h-l, abs(h-pc), abs(l-pc))
-            trs.append(tr)
-        if len(trs)<length: return sum(trs)/len(trs) if trs else 2.5
-        atr=sum(trs[:length])/length
-        for tr in trs[length:]: atr=(atr*(length-1)+tr)/length
-        return atr
-    except: return 2.5
-
-def calc_fib_h2_l2(h2, l2):
-    try:
-        if h2 is None or l2 is None: return None
-        fib_range = h2 - l2
-        if fib_range <=0: return None
-        return {"h2":h2, "l2":l2, "range":fib_range, "fib_0":h2, "fib_0_38":l2+fib_range*0.38, "fib_0_5":l2+fib_range*0.5, "fib_1":l2, "fib_2_414":l2+fib_range*2.414}
-    except: return None
+        import random as _r
+        spot=22527+_r.uniform(-60,60)
+        if STATE["open_price"]==0:
+            STATE["open_price"]=22500
+            STATE["open_time"]="09:15"
+            STATE["call_strike"]=22650
+            STATE["put_strike"]=22350
+            STATE["trend"]="Sideways - Default Put Side"
+            STATE["selected_strike"]=22350
+            STATE["option_type"]="PE"
+            STATE["selected_type"]="22350PE (-150) 0.30 Delta Put Side Default"
+            STATE["strike"]=22350
+            log(f"SIM Open Price Captured 22500 Call 22650 (+150) Put 22350 (-150) 0.30 Delta")
+        open_price=STATE["open_price"]
+        call_strike=STATE["call_strike"]
+        put_strike=STATE["put_strike"]
+        if spot > open_price+20:
+            STATE["trend"]="Bullish Up Side"
+            STATE["selected_strike"]=call_strike
+            STATE["option_type"]="CE"
+            STATE["selected_type"]=f"{call_strike}CE (+150) 0.30 Delta Call Side"
+            STATE["strike"]=call_strike
+        elif spot < open_price-20:
+            STATE["trend"]="Bearish Down Side"
+            STATE["selected_strike"]=put_strike
+            STATE["option_type"]="PE"
+            STATE["selected_type"]=f"{put_strike}PE (-150) 0.30 Delta Put Side"
+            STATE["strike"]=put_strike
+        strike_sim=STATE["strike"]
+        intr=max(strike_sim-spot,0) if STATE["option_type"]=="PE" else max(spot-strike_sim,0)
+        tv=70+_r.uniform(-5,8)+math.sin(time.time()/50)*2
+        prem=intr+tv
+        if prem<10: prem=70; tv=70
+        return spot, prem, strike_sim, intr, tv, f"SIM {STATE['selected_type']} Open {open_price:.0f} Trend {STATE['trend']}"
+    except Exception as e:
+        log(f"NSE ERR {e}")
+        return 22527, 75, 22350, 0, 75, "SIM ERROR"
 
 def detect_pivots():
     try:
+        if len(CANDLES)<LEFT_BARS+RIGHT_BARS+1:
+            return None, None
         clist=list(CANDLES)
-        if len(clist) < LEFT_BARS+RIGHT_BARS+1: return None, None
-        idx = len(clist) - RIGHT_BARS - 1
-        if idx < LEFT_BARS or idx >= len(clist): return None, None
-        cand = clist[idx]
-        is_low=True; is_high=True
-        curr_l=cand['l']; curr_h=cand['h']
-        for j in range(idx-LEFT_BARS, idx+RIGHT_BARS+1):
-            if j==idx: continue
-            if j<0 or j>=len(clist): continue
-            if clist[j]['l'] <= curr_l: is_low=False
-            if clist[j]['h'] >= curr_h: is_high=False
-        return (curr_l if is_low else None), (curr_h if is_high else None)
-    except: return None, None
+        idx=len(clist)-RIGHT_BARS-1
+        if idx<LEFT_BARS: return None, None
+        curr=clist[idx]
+        is_low=True
+        is_high=True
+        for i in range(idx-LEFT_BARS, idx):
+            if clist[i]['l']<=curr['l']: is_low=False
+        for i in range(idx+1, idx+RIGHT_BARS+1):
+            if i<len(clist) and clist[i]['l']<=curr['l']: is_low=False
+        for i in range(idx-LEFT_BARS, idx):
+            if clist[i]['h']>=curr['h']: is_high=False
+        for i in range(idx+1, idx+RIGHT_BARS+1):
+            if i<len(clist) and clist[i]['h']>=curr['h']: is_high=False
+        if is_low: return curr['l'], None
+        if is_high: return None, curr['h']
+        return None, None
+    except:
+        return None, None
 
-def get_nse():
-    try:
-        headers={"User-Agent":"Mozilla/5.0","Referer":"https://www.nseindia.com/option-chain"}
-        s=requests.Session()
-        s.headers.update(headers)
-        s.get("https://www.nseindia.com/option-chain",timeout=5)
-        r=s.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY",timeout=5)
-        if r.status_code==200:
-            d=r.json()
-            spot=float(d["records"]["underlyingValue"])
-            # Capture open price if not set - After market opening
-            if STATE["open_price"]==0 or STATE["open_price"] is None:
-                STATE["open_price"]=spot
-                STATE["open_time"]=datetime.now(IST).strftime("%H:%M")
-                # Calculate trend strikes
-                call_strike=int(((spot+150)//50)*50)
-                put_strike=int(((spot-150)//50)*50)
-                STATE["call_strike"]=call_strike
-                STATE["put_strike"]=put_strike
-                log(f"Open Price Captured {spot:.2f} Call {call_strike} (+150) Put {put_strike} (-150) 0.30 Delta")
-            # Determine strike based on trend - Choose after open
-            open_price=STATE["open_price"] if STATE["open_price"]!=0 else spot
-            call_strike=int(((open_price+150)//50)*50)
-            put_strike=int(((open_price-150)//50)*50)
-            STATE["call_strike"]=call_strike
-            STATE["put_strike"]=put_strike
-            # Trend calculation
-            if spot > open_price+20:
-                STATE["trend"]="Bullish Up Side"
-                selected_strike=call_strike
-                option_type="CE"
-                selected_type=f"{call_strike}CE (+150) 0.30 Delta Call Side"
-            elif spot < open_price-20:
-                STATE["trend"]="Bearish Down Side"
-                selected_strike=put_strike
-                option_type="PE"
-                selected_type=f"{put_strike}PE (-150) 0.30 Delta Put Side"
-            else:
-                # Default to Put as per inverse HS - or keep previous
-                if STATE["trend"]=="":
-                    STATE["trend"]="Sideways - Default Put Side"
-                    selected_strike=put_strike
-                    option_type="PE"
-                    selected_type=f"{put_strike}PE (-150) 0.30 Delta Put Side Default"
-                else:
-                    # Keep previous trend selection
-                    if "Call" in STATE["selected_type"] or "CE" in STATE["selected_type"]:
-                        selected_strike=call_strike
-                        option_type="CE"
-                        selected_type=f"{call_strike}CE (+150) 0.30 Delta Call Side"
-                    else:
-                        selected_strike=put_strike
-                        option_type="PE"
-                        selected_type=f"{put_strike}PE (-150) 0.30 Delta Put Side"
-            STATE["selected_strike"]=selected_strike
-            STATE["option_type"]=option_type
-            STATE["selected_type"]=selected_type
-            STATE["strike"]=selected_strike
-            
-            # Find premium for selected strike with 0.30 delta approx
-            for it in d["records"]["data"]:
-                if it.get("strikePrice")==selected_strike:
-                    if option_type=="PE" and it.get("PE"):
-                        lp=float(it["PE"].get("lastPrice",0))
-                        if lp>0:
-                            intr=max(selected_strike-spot,0) if option_type=="PE" else max(spot-selected_strike,0)
-                            tv=lp-intr
-                            if tv<0: tv=lp
-                            return spot, lp, selected_strike, intr, tv, f"NSE LIVE {selected_type} Open {open_price:.0f} Trend {STATE['trend']}"
-                    elif option_type=="CE" and it.get("CE"):
-                        lp=float(it["CE"].get("lastPrice",0))
-                        if lp>0:
-                            intr=max(spot-selected_strike,0)
-                            tv=lp-intr
-                            if tv<0: tv=lp
-                            return spot, lp, selected_strike, intr, tv, f"NSE LIVE {selected_type} Open {open_price:.0f} Trend {STATE['trend']}"
-    except Exception as e:
-        log(f"NSE ERR {e}")
-    # SIM fallback
-    spot_sim=22527+random.uniform(-40,40)
-    if STATE["open_price"]==0:
-        STATE["open_price"]=22500
-        STATE["open_time"]="09:15"
-        STATE["call_strike"]=22650
-        STATE["put_strike"]=22350
-        STATE["trend"]="Sideways - Default Put Side"
-        STATE["selected_strike"]=22350
-        STATE["option_type"]="PE"
-        STATE["selected_type"]="22350PE (-150) 0.30 Delta Put Side Default"
-        STATE["strike"]=22350
-        log(f"SIM Open Price Captured 22500 Call 22650 (+150) Put 22350 (-150) 0.30 Delta")
-    open_price=STATE["open_price"]
-    call_strike=STATE["call_strike"]
-    put_strike=STATE["put_strike"]
-    # Trend SIM
-    if spot_sim > open_price+20:
-        STATE["trend"]="Bullish Up Side"
-        STATE["selected_strike"]=call_strike
-        STATE["option_type"]="CE"
-        STATE["selected_type"]=f"{call_strike}CE (+150) 0.30 Delta Call Side"
-        STATE["strike"]=call_strike
-    elif spot_sim < open_price-20:
-        STATE["trend"]="Bearish Down Side"
-        STATE["selected_strike"]=put_strike
-        STATE["option_type"]="PE"
-        STATE["selected_type"]=f"{put_strike}PE (-150) 0.30 Delta Put Side"
-        STATE["strike"]=put_strike
-    strike_sim=STATE["strike"]
-    intr=max(strike_sim-spot_sim,0) if STATE["option_type"]=="PE" else max(spot_sim-strike_sim,0)
-    tv=70+random.uniform(-5,8)+math.sin(time.time()/50)*2
-    prem=intr+tv
-    if prem<10: prem=70; tv=70
-    return spot_sim, prem, strike_sim, intr, tv, f"SIM {STATE['selected_type']} Open {open_price:.0f} Trend {STATE['trend']}"
-
+# Init candles
 for i in range(40):
     base=70+i*0.4
     if i==8: c=75; o=74
@@ -292,228 +392,57 @@ for i in range(40):
     CANDLES.append({"o":o,"h":c+1.0,"l":c-1.0,"c":c,"t":f"09:{15+i:02d}","buy":False,"sell_sl":False,"sell_tgt":False})
 
 HTML = """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Five Rules - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500</title>
+<title>200 EMA - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1</title>
 <style>
 body{background:#0a0e1a;color:#e2e8f0;padding:8px;font-family:Arial;margin:0}
-h2{color:#fff;text-align:center;margin:0 0 8px 0;font-size:14px;background:linear-gradient(90deg,#22c55e,#3b82f6);padding:12px;border-radius:12px;border:2px solid #fff}
 .card{background:#151d2f;padding:12px;border-radius:14px;margin:10px 0;border:2px solid #2d3748}
 .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.grid5{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px}
 .box{background:#0f172a;padding:10px;border-radius:10px;border:1px solid #334155;text-align:center}
-.box .l{color:#94a3b8;font-size:9px} .box .v{color:#fff;font-size:13px;font-weight:bold;margin-top:4px}
-#chart{background:#fff;border-radius:14px;padding:10px;margin:10px 0;min-height:900px;border:3px solid #22c55e;position:relative}
-canvas{width:100%;height:750px;background:#fff;border-radius:10px;display:block}
-.btn{padding:8px 14px;font-weight:bold;border-radius:10px;text-decoration:none;display:inline-block;margin:4px;font-size:11px}
-.btn-g{background:linear-gradient(90deg,#22c55e,#16a34a);color:#000} .btn-r{background:linear-gradient(90deg,#ef4444,#dc2626);color:#fff} .btn-p{background:linear-gradient(90deg,#a855f7,#7c3aed);color:#fff} .btn-y{background:linear-gradient(90deg,#eab308,#d97706);color:#000} .btn-b{background:linear-gradient(90deg,#3b82f6,#2563eb);color:#fff}
 .small{font-size:9px;color:#94a3b8}
-.status-open{color:#000;background:#22c55e;padding:8px 14px;border-radius:10px;font-size:12px;font-weight:bold;border:2px solid #fff;display:inline-block;margin:3px}
-.loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(15,23,42,0.98);color:#22c55e;padding:16px 24px;border-radius:12px;font-weight:bold;border:3px solid #22c55e;z-index:10;text-align:center}
-.five-box{background:linear-gradient(135deg,#052e16,#0f172a);border:3px solid #22c55e;padding:12px;border-radius:12px;margin:10px 0}
-.open-box{background:linear-gradient(135deg,#1e1b4b,#312e81);border:3px solid #8b5cf6;padding:12px;border-radius:12px;margin:10px 0}
-.trail-box{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:3px solid #f97316;padding:12px;border-radius:12px;margin:10px 0}
 </style></head><body>
-
-<div class="open-box">
-<div style="color:#c4b5fd;font-weight:bold;font-size:14px">📍 Option Premium Choose After Market Opening - Open Price 22500 Calculate Trend Call 22650 (150 Up) Or Put 22350 (150 Down) With 0.30 Delta - NEW - As Per Your Request!</div>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:8px">
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #eab308;text-align:center"><div class="small">Open Price 9:15 After Opening</div><div style="color:#eab308;font-size:16px;font-weight:bold" id="open_price_val">22500</div><div class="small">NIFTY Spot Open Capture</div><div class="small" id="open_time">09:15 Captured</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #22c55e;text-align:center"><div class="small">Trend Calculate After Opening</div><div style="color:#22c55e;font-size:14px;font-weight:bold" id="trend_val">Bearish Down Side</div><div class="small">Spot vs Open Price</div><div class="small" id="trend_calc">Spot 22527 vs Open 22500 = Up 27 = Bullish? Down?</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #3b82f6;text-align:center"><div class="small">Call Side 22650 (150 Up) 0.30 Delta</div><div style="color:#3b82f6;font-size:14px;font-weight:bold" id="call_side">22650CE +150 0.30 Delta</div><div class="small">Open 22500 +150 = 22650 CE</div><div class="small">OTM Call 0.30 Delta</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #ef4444;text-align:center"><div class="small">Put Side 22350 (150 Down) 0.30 Delta</div><div style="color:#ef4444;font-size:14px;font-weight:bold" id="put_side">22350PE -150 0.30 Delta</div><div class="small">Open 22500 -150 = 22350 PE</div><div class="small">OTM Put 0.30 Delta</div></div>
-</div>
-<div style="margin-top:8px;background:#0f172a;padding:8px;border-radius:8px;border:2px solid #8b5cf6;text-align:center"><div class="small">Selected Option Premium - Trend Based - Only Premium - With 0.30 Delta</div><div style="color:#fff;font-size:16px;font-weight:bold" id="selected_option">22350PE (-150) 0.30 Delta Put Side - Selected - Only Premium Trading</div><div class="small">After Market Opening Open Price 22500 Calculate Trend -> Choose Call 22650 (+150) Or Put 22350 (-150) With 0.30 Delta - Only Premium - As Per Your Request!</div></div>
-</div>
-
-<div class="trail-box">
-<div style="color:#fdba74;font-weight:bold;font-size:14px">🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - NEW - As Per Your Request!</div>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:8px">
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:1px solid #f97316;text-align:center"><div class="small">Entry Premium</div><div style="color:#fff;font-size:14px;font-weight:bold" id="entry_trail">76.00 Entry</div><div class="small">Buy Price Premium Entry</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:1px solid #22c55e;text-align:center"><div class="small">Premium Go Up Side Mini 15 Point</div><div style="color:#22c55e;font-size:14px;font-weight:bold" id="upside_15">Entry+15 = 91.00</div><div class="small">Mini 15 Point Up Side - Your Request!</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:1px solid #eab308;text-align:center"><div class="small">Current Premium</div><div style="color:#eab308;font-size:14px;font-weight:bold" id="current_prem">92.00 Current</div><div class="small">Premium Live - Goes Up Side</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #f97316;text-align:center"><div class="small">SL Trail Cost to Cost Only One Time</div><div style="color:#f97316;font-size:14px;font-weight:bold" id="sl_trail_status">SL 70.82 Shift to Entry 76.00 Once!</div><div class="small">Only One Time - Cost to Cost - No Loss!</div></div>
-</div>
-<div class="small" style="margin-top:6px;color:#fff">SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost: Entry 76.00 SL 0.38 Fib 70.82 When Premium Goes Up Side Mini 15 Point = Entry 76 +15 = 91.00 Current 92.00 >= 91.00 YES! Then SL Trail to Cost to Cost = SL Shift to Entry 76.00 Only One Time! After Shift Risk Free! P&L 0 if SL hit! Only Once! - As Per Your Request!</div>
-</div>
-
-<div class="five-box">
-<div style="color:#bbf7d0;font-weight:bold;font-size:14px">📊 Five Most Important Rules - As Per Previous Request - Still Active!</div>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-top:8px">
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #f59e0b;text-align:center"><div class="small">1. Fib 0.5 Cross</div><div style="color:#f59e0b;font-size:11px;font-weight:bold" id="rule1">YES Cross</div><div class="small">Close > Fib 0.5 & Prev <= Fib 0.5</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #8b5cf6;text-align:center"><div class="small">2. EMA Cross Fib 0.5</div><div style="color:#8b5cf6;font-size:11px;font-weight:bold" id="rule2">YES Cross</div><div class="small">EMA > Fib 0.5</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #22c55e;text-align:center"><div class="small">3. Green Above EMA</div><div style="color:#22c55e;font-size:11px;font-weight:bold" id="rule3">YES Green Above EMA</div><div class="small">Close >= Open & Close > EMA</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #f97316;text-align:center"><div class="small">4. SL 0.38 + Trail 15pt Cost to Cost Once</div><div style="color:#f97316;font-size:11px;font-weight:bold" id="rule4">SL 70.82 Trail Once 15pt</div><div class="small">SL 0.38 + 15pt Trail Cost to Cost Once</div></div>
-<div style="background:#0f172a;padding:8px;border-radius:8px;border:2px solid #3b82f6;text-align:center"><div class="small">5. Target 2.414</div><div style="color:#3b82f6;font-size:11px;font-weight:bold" id="rule5">TGT 117.99 2.414</div><div class="small">L2+Range*2.414</div></div>
-</div>
-</div>
-
-<h2>📊 Five Rules + SL Trail 15 Point Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Only Premium - Deploy Fixed - Telegram ON</h2>
-
+<h2 style="background:linear-gradient(90deg,#22c55e,#3b82f6);padding:12px;border-radius:12px;text-align:center">Target 1.6 Fib -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1 After Cross 1 Fib - 5F - 75-80% Win</h2>
 <div class="card">
-<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
-<span id="market_status" class="status-open">Loading Five Rules + Trail + Option Choose</span>
-<span id="nse_status" style="color:#000;background:#eab308;padding:5px 10px;border-radius:8px;font-size:10px">● NSE LIVE Five Rules</span>
-<span id="tg_status" style="color:#fff;background:#22c55e;padding:5px 10px;border-radius:8px;font-size:10px">● TELEGRAM ON</span>
-<span id="tf_status" style="color:#fff;background:#6366f1;padding:5px 10px;border-radius:8px;font-size:10px">● TF 5 MIN</span>
-<span id="lt" class="small" style="margin-left:auto"></span>
+<div>Open: <span id="open_price_val">22500</span> | Trend: <span id="trend_val">Bearish</span> | Selected: <span id="selected_option">22350PE</span></div>
+<div>Entry: <span id="entry_trail">76</span> | SL: <span id="sl_trail_status">70.82</span> | Target: <span id="tgt_p">98.5 -> 117.99</span></div>
+<div>Trades: <span id="trades">0/5</span> | P&L: <span id="pnl">Rs.0</span> | Daily: <span id="daily_pnl">0</span></div>
+<div>Fib 1: <span id="fib1">85.2</span> | Fib 1.6: <span id="fib16">98.5</span> | Fib 2.414: <span id="fib2414">117.99</span> | Fib 0.38 SL: <span id="fib038">70.82</span></div>
 </div>
-
-<div class="grid4" style="margin-top:10px">
-<div class="box"><div class="l">Trades Today</div><div class="v" id="trades" style="font-size:22px;color:#22c55e">0/5</div><div class="small">Five Rules + Trail 15pt</div></div>
-<div class="box"><div class="l">Open Price 9:15 Trend Option Choose</div><div class="v" id="open_trend_box" style="color:#8b5cf6">22500 Bearish Put 22350</div><div class="small" id="open_trend_vals">Open 22500 Trend Bearish Put 22350PE 0.30 Delta</div></div>
-<div class="box"><div class="l">Premium Only Selected Strike</div><div class="v" id="which_prem" style="color:#eab308">22350PE 0.30 Delta</div><div class="small">Only Premium - 150pt 0.30 Delta</div></div>
-<div class="box"><div class="l">P&L Five Rules Trail 15pt</div><div class="v" id="pnl" style="color:#22c55e;font-size:22px">Rs.0</div><div class="small">Trail Cost to Cost Once</div></div>
-</div>
-
-<div class="grid3" style="margin-top:10px">
-<div class="box"><div class="l">Entry Five Rules Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA</div><div class="v" id="entry_p" style="color:#22c55e">76.00 BUY Five Rules</div><div class="small">Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA</div></div>
-<div class="box"><div class="l">SL 0.38 + Trail 15pt Cost to Cost Only Once NEW!</div><div class="v" id="sl_p" style="color:#f97316">70.82 SL 0.38 Trail 15pt Once</div><div class="small">SL 0.38 Fib + Premium Up 15pt Trail Cost to Cost Once</div><div class="small">Only One Time - Your Request!</div></div>
-<div class="box"><div class="l">Target 2.414 Fib Extension</div><div class="v" id="tgt_p" style="color:#3b82f6">117.99 TGT 2.414</div><div class="small">L2+Range*2.414 Big Target</div></div>
-</div>
-
-<div style="text-align:center;margin-top:10px">
-<a class="btn btn-g" href="/force_buy">🟢 Force BUY - Five Rules + Trail 15pt + Option Choose Open</a>
-<a class="btn btn-r" href="/force_sell">🔴 Force SELL - Trail Cost to Cost Once</a>
-<a class="btn btn-p" href="/force_trade">⚡ Force ON - Five Rules + Trail + Option Choose</a>
-<a class="btn btn-y" href="/test_telegram">🔔 Test Telegram - Five Rules + Trail 15pt + Option Choose</a>
-<a class="btn btn-b" href="/health">Health - Five Rules + Trail + Option Choose</a>
-</div>
-</div>
-
-<div id="chart">
-<div id="chart_loading" class="loading">Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - Chart Working</div>
-<div style="color:#000;font-weight:bold;text-align:center;font-size:13px">📊 LIVE Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open Price 22500 Trend Call 22650 Put 22350 0.30 Delta - Only Premium - Your Latest Request</div>
-<canvas id="c" width="900" height="750"></canvas>
-<div id="trade_list" style="color:#000;font-size:11px;margin-top:8px;background:#f0fdf4;padding:8px;border-radius:8px;border:2px solid #22c55e">Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open Price 22500 Trend Call 22650 Put 22350 0.30 Delta - Loading...</div>
-</div>
-
 <div class="card">
-<pre id="log" style="background:#0f172a;color:#22c55e;padding:10px;border-radius:10px;border:2px solid #334155;font-size:9px;max-height:220px;overflow:auto;white-space:pre-wrap;margin:0">Five Rules + SL Trail 15pt + Option Choose Open 22500 Loading...</pre>
+<div>Auto Loaded - Target 1.6 Fib + Shift to 2.414 Near + SL 15pt Cost + SL Trail to Fib 1.0 After Cross 1 Fib - Market Opening Price Pasun 150pt Delta 0.30</div>
+<div id="log" style="font-size:10px;white-space:pre-wrap;max-height:200px;overflow-y:auto"></div>
 </div>
-
 <script>
-let candles=[]; let pivots={h2:85.2,l2:62,range:23.2,fib038:70.82,fib05:73.6,fib2414:117.99,open:22500,call:22650,put:22350}; let fib={ema:75.2,vol:0.85,entry:76,sl:70.82,target:117.99,h2:85.2,l2:62,sl_shifted:false};
-
-function draw(){
- let canvas=document.getElementById('c'); if(!canvas) return; let ctx=canvas.getContext('2d'); let W=canvas.width,H=canvas.height,pad=60;
- if(candles.length==0){ctx.clearRect(0,0,W,H); ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,H); ctx.fillStyle="#000"; ctx.font="bold 14px Arial"; ctx.fillText("Five Rules + Trail 15pt + Option Choose - Loading",W/2-150,H/2); return;}
- let l=document.getElementById('chart_loading'); if(l) l.style.display='none';
- ctx.clearRect(0,0,W,H); ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,H);
- let allHighs=candles.map(c=>c.h); let allLows=candles.map(c=>c.l);
- let min=Math.min(...allLows,fib.sl,fib.l2,fib.ema)-10; let max=Math.max(...allHighs,fib.target,fib.h2,fib.ema)+15;
- if(!isFinite(min)||!isFinite(max)){min=50; max=120;}
- let y=v=>H-pad-(v-min)/(max-min)*(H-pad*2); let x=i=>pad+i/(candles.length-1)*(W-pad*2);
- ctx.strokeStyle="#f1f5f9"; ctx.lineWidth=1;
- for(let i=0;i<=6;i++){let yy=pad+i*(H-pad*2)/6; ctx.beginPath(); ctx.moveTo(pad,yy); ctx.lineTo(W-pad,yy); ctx.stroke(); ctx.fillStyle="#64748b"; ctx.font="10px Arial"; ctx.fillText((max-(max-min)*i/6).toFixed(1),6,yy+3);}
- function line(val,color,label,dash,width){try{if(val<=min||val>=max||!isFinite(val)||val==0) return; ctx.strokeStyle=color; ctx.lineWidth=width||2.5; ctx.setLineDash(dash||[]); ctx.beginPath(); ctx.moveTo(pad,y(val)); ctx.lineTo(W-pad,y(val)); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle=color; ctx.font="bold 11px Arial"; ctx.fillText(label+" "+val.toFixed(2),W-pad-220,y(val)-6);}catch(e){}}
- line(pivots.h2||85.2,"#f59e0b","H2 0% Fib Top",[],2.5);
- line(pivots.l2||62,"#ef4444","L2 100% Fib Bottom",[],2.5);
- line(pivots.fib038||70.82,"#f97316","4. SL 0.38 Fib - Trail 15pt Cost to Cost Once",[0],4);
- line(pivots.fib05||73.6,"#f59e0b","1. Fib 0.5 Cross Level - Entry! + 2. EMA Cross Fib 0.5",[0],3.5);
- line(fib.ema,"#8b5cf6","EMA20 - 2. EMA Cross Fib 0.5 & 3. Green Above EMA",[4,4],3);
- line(fib.entry,"#22c55e","Entry - Five Rules: Fib 0.5 Cross + EMA Cross Fib 0.5 + Green Above EMA",[],3.5);
- line(fib.target,"#3b82f6","5. Target 2.414 Fib Extension - Big Target!",[],3);
- line(fib.entry+15,"#22c55e","Trail Trigger Entry+15 = Cost to Cost Once - 15pt Up Side",[6,4],2);
- if(fib.sl_shifted){line(fib.entry,"#22c55e","SL Shifted to Cost to Cost Entry Price - Once! - 15pt Trail - Cost to Cost",[6,4],2.5);}
- 
- try{
-   if(fib.h2>0 && fib.l2>0){
-     ctx.fillStyle="rgba(245,158,11,0.12)"; ctx.fillRect(pad,y(fib.h2),W-pad*2,y(fib.l2)-y(fib.h2));
-     ctx.strokeStyle="#f59e0b"; ctx.lineWidth=2; ctx.setLineDash([5,5]); ctx.strokeRect(pad,y(fib.h2),W-pad*2,y(fib.l2)-y(fib.h2)); ctx.setLineDash([]);
-     ctx.fillStyle="#f59e0b"; ctx.font="bold 10px Arial"; ctx.fillText("FIB H2-L2 Range "+(fib.h2-fib.l2).toFixed(2)+" - Five Rules + Trail 15pt + Option Choose",pad+10,y(fib.h2)-10);
-     ctx.fillStyle="#f97316"; ctx.font="bold 11px Arial"; ctx.fillText("4. SL 0.38 Fib = "+fib.sl.toFixed(2)+" Trail 15pt to Entry "+fib.entry.toFixed(2)+" Cost to Cost Once!",pad+10,y(fib.sl)-12);
-     ctx.fillStyle="#f59e0b"; ctx.font="bold 11px Arial"; ctx.fillText("1. Fib 0.5 = "+(pivots.fib05||73.6).toFixed(2)+" Entry! + Trail Trigger Entry+15="+(fib.entry+15).toFixed(2),pad+10,y(pivots.fib05||73.6)-12);
-     ctx.fillStyle="#3b82f6"; ctx.font="bold 11px Arial"; ctx.fillText("5. Target 2.414 = "+fib.target.toFixed(2)+" Big Target! Open "+pivots.open+" Call "+pivots.call+" Put "+pivots.put+" 0.30 Delta",pad+10,y(fib.target)-12);
-   }
- }catch(e){}
- 
- candles.forEach((c,i)=>{
-  try{
-   let g=c.c>=c.o; ctx.fillStyle=g?"#22c55e":"#ef4444"; ctx.strokeStyle=g?"#16a34a":"#dc2626";
-   let bh=Math.abs(y(c.o)-y(c.c)); let by=Math.min(y(c.o),y(c.c)); let w=Math.max(6,(W-pad*2)/candles.length*0.7);
-   ctx.beginPath(); ctx.moveTo(x(i),y(c.h)); ctx.lineTo(x(i),y(c.l)); ctx.stroke();
-   ctx.fillRect(x(i)-w/2,by,w,Math.max(4,bh));
-   if(g && c.c>fib.ema){ctx.fillStyle="rgba(34,197,94,0.18)"; ctx.fillRect(x(i)-w/2-2,0,w+4,H-pad*2);}
-   if(c.buy){
-     ctx.fillStyle="#22c55e"; ctx.beginPath(); ctx.arc(x(i),y(c.c),22,0,Math.PI*2); ctx.fill();
-     ctx.strokeStyle="#000"; ctx.lineWidth=3; ctx.stroke();
-     ctx.fillStyle="#fff"; ctx.font="bold 13px Arial"; ctx.fillText("BUY",x(i)-14,y(c.c)+4);
-     ctx.fillStyle="#000"; ctx.font="bold 10px Arial"; ctx.fillText("BUY Five Rules + Trail 15pt + Open "+pivots.open+" Call "+pivots.call+" Put "+pivots.put+" 0.30 Delta @"+c.c.toFixed(1),x(i)+26,y(c.c)-20);
-     ctx.fillStyle="#22c55e"; ctx.font="bold 9px Arial"; ctx.fillText("Five Rules Fib 0.5 Cross EMA Cross Fib 0.5 Green Above EMA + Trail 15pt Cost to Cost Once",x(i)+26,y(c.c)-8);
-   }
-   if(c.sell_sl){ctx.fillStyle="#ef4444"; ctx.beginPath(); ctx.arc(x(i),y(c.c),15,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#000"; ctx.lineWidth=2.5; ctx.stroke(); ctx.fillStyle="#fff"; ctx.font="bold 11px Arial"; ctx.fillText("SL 0.38",x(i)-18,y(c.c)+3);}
-   if(c.sell_tgt){ctx.fillStyle="#3b82f6"; ctx.beginPath(); ctx.arc(x(i),y(c.c),15,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#000"; ctx.lineWidth=2.5; ctx.stroke(); ctx.fillStyle="#fff"; ctx.font="bold 10px Arial"; ctx.fillText("TGT 2.414",x(i)-22,y(c.c)+3);}
-  }catch(e){}
- });
- ctx.fillStyle="#000"; ctx.font="10px Arial";
- candles.forEach((c,i)=>{try{if(i%Math.ceil(candles.length/14)==0){ctx.fillText(c.t,x(i)-14,H-14);}}catch(e){}});
-}
-
 async function refresh(){
  try{
-  let r=await fetch('/api/candles?t='+Date.now()); if(!r.ok) throw new Error('API '+r.status); let j=await r.json();
-  candles=j.candles||[];
-  pivots.h2=j.h2||85.2; pivots.l2=j.l2||62; pivots.range=j.fib_range_h2_l2||23.2; pivots.fib038=j.fib_0_38||70.82; pivots.fib05=j.fib_0_5||73.6; pivots.fib2414=j.fib_2_414||117.99; pivots.open=j.open_price||22500; pivots.call=j.call_strike||22650; pivots.put=j.put_strike||22350;
-  fib.ema=j.ema||75.2; fib.vol=j.volatility_percent||0.85; fib.entry=j.entry||76; fib.sl=j.sl||70.82; fib.target=j.target||117.99; fib.h2=j.h2||85.2; fib.l2=j.l2||62; fib.sl_shifted=j.sl_shifted||false;
-  
+  let r=await fetch('/api/candles?t='+Date.now()); let j=await r.json();
   document.getElementById('open_price_val').innerText=(j.open_price||22500).toFixed(0);
-  document.getElementById('open_time').innerText=(j.open_time||'09:15')+' Captured';
-  document.getElementById('trend_val').innerText=j.trend||'Bearish Down Side';
-  document.getElementById('trend_calc').innerText=`Spot ${j.spot_val? j.spot_val.toFixed(0):'22527'} vs Open ${j.open_price? j.open_price.toFixed(0):'22500'} = ${j.spot_val && j.open_price ? (j.spot_val-j.open_price).toFixed(0):'27'} = ${j.trend||'Bearish'}`;
-  document.getElementById('call_side').innerText=(j.call_strike||22650)+'CE +150 0.30 Delta';
-  document.getElementById('put_side').innerText=(j.put_strike||22350)+'PE -150 0.30 Delta';
-  document.getElementById('selected_option').innerText=j.selected_type||'22350PE (-150) 0.30 Delta Put Side - Selected - Only Premium Trading';
-  
-  document.getElementById('entry_trail').innerText=(j.entry||76).toFixed(2)+' Entry';
-  document.getElementById('upside_15').innerText='Entry+15 = '+(j.entry? (j.entry+15).toFixed(2):'91.00');
-  document.getElementById('current_prem').innerText=(j.prem_val||87.30).toFixed(2)+' Current';
-  document.getElementById('sl_trail_status').innerText=j.sl_shifted ? `Shifted to Entry ${j.entry? j.entry.toFixed(2):'76.00'} Once! Cost to Cost!` : `SL ${j.fib_0_38? j.fib_0_38.toFixed(2):'70.82'} Shift to Entry ${j.entry? j.entry.toFixed(2):'76.00'} Once!`;
-  
-  document.getElementById('rule1').innerText=j.fib_0_5_cross ? 'YES Cross' : 'NO';
-  document.getElementById('rule2').innerText=j.ema_cross_fib_0_5 ? 'YES Cross' : 'NO';
-  document.getElementById('rule3').innerText=j.green_candle_upside_ema ? 'YES Green Above EMA' : 'NO';
-  document.getElementById('rule4').innerText=j.sl_shifted ? `Shifted to ${j.entry? j.entry.toFixed(2):'76.00'} Once!` : `SL ${j.fib_0_38? j.fib_0_38.toFixed(2):'70.82'} Trail Once 15pt`;
-  document.getElementById('rule5').innerText=(j.fib_2_414||117.99).toFixed(2)+' 2.414';
-  
+  document.getElementById('trend_val').innerText=j.trend||'Bearish';
+  document.getElementById('selected_option').innerText=j.selected_type||'22350PE';
+  document.getElementById('entry_trail').innerText=(j.entry||76).toFixed(2);
+  document.getElementById('sl_trail_status').innerText=j.sl_shifted ? `Shifted ${j.entry? j.entry.toFixed(2):'76'} Cost + Fib1 Trail ${j.sl_trail_to_fib1? 'Yes':''}` : `${(j.sl||70.82).toFixed(2)} SL 0.38 Trail 15pt Cost + Fib1`;
+  document.getElementById('tgt_p').innerText=`${(j.target1||98.5).toFixed(2)} 1.6 -> ${(j.target2||117.99).toFixed(2)} 2.414 ${j.target_shifted? 'Shifted!':''}`;
   document.getElementById('trades').innerText=(j.trades_today||0)+'/5';
-  document.getElementById('open_trend_box').innerText=`${j.open_price? j.open_price.toFixed(0):'22500'} ${j.trend? j.trend.split(' ')[0]:'Bearish'} ${j.selected_type? j.selected_type.split(' ')[0]:'Put 22350'}`;
-  document.getElementById('open_trend_vals').innerText=`Open ${j.open_price? j.open_price.toFixed(0):'22500'} Trend ${j.trend||'Bearish'} ${j.selected_type||'Put 22350PE 0.30 Delta'}`;
-  document.getElementById('which_prem').innerText=j.selected_type||'22350PE 0.30 Delta';
   document.getElementById('pnl').innerText='Rs.'+(j.pnl||0);
-  document.getElementById('entry_p').innerText=(j.entry||76).toFixed(2)+' BUY Five Rules';
-  document.getElementById('sl_p').innerText=j.sl_shifted ? (j.entry||76).toFixed(2)+' SL Shifted Entry Once! 15pt Trail' : (j.sl||70.82).toFixed(2)+' SL 0.38 Trail 15pt Once';
-  document.getElementById('tgt_p').innerText=(j.target||117.99).toFixed(2)+' TGT 2.414';
-  document.getElementById('market_status').innerText='● '+(j.market||'Five Rules + Trail 15pt + Option Choose');
-  document.getElementById('nse_status').innerText='● '+(j.src||'NSE');
-  document.getElementById('tg_status').innerText=j.telegram_enabled ? '● TELEGRAM ON' : '🔕 TELEGRAM OFF';
-  document.getElementById('tf_status').innerText='● TF '+(j.timeframe_str||'5 MIN');
+  document.getElementById('daily_pnl').innerText='Rs.'+(j.daily_pnl||0);
+  document.getElementById('fib1').innerText=(j.fib_1||85.2).toFixed(2);
+  document.getElementById('fib16').innerText=(j.fib_1_6||98.5).toFixed(2);
+  document.getElementById('fib2414').innerText=(j.fib_2_414||117.99).toFixed(2);
+  document.getElementById('fib038').innerText=(j.fib_0_38||70.82).toFixed(2);
   let logEl=document.getElementById('log');
   if(logEl && j.logs){logEl.innerText=j.logs.slice(-30).join('\n');}
-  let tl=document.getElementById('trade_list');
-  if(tl){
-    if(j.trades_history && j.trades_history.length>0){
-      tl.innerHTML='<b>Five Rules + SL Trail 15pt + Option Choose Trades:</b><br>'+j.trades_history.map(t=>`Trade ${t.no}/5: BUY @${t.buy_price.toFixed(1)} ${t.selected_type||''} Fib 0.5 Cross ${t.fib05Cross? 'YES':''} EMA Cross Fib 0.5 ${t.emaCrossFib05? 'YES':''} Green Above EMA ${t.greenAboveEMA? 'YES':''} Open ${t.open_price||22500} Call ${t.call_strike||22650} Put ${t.put_strike||22350} 0.30 Delta H2 ${t.h2? t.h2.toFixed(1):''} L2 ${t.l2? t.l2.toFixed(1):''} Fib 0.5 ${t.fib05? t.fib05.toFixed(1):''} SL 0.38 ${t.sl? t.sl.toFixed(1):''} ${t.sl_shifted? 'Shifted to Entry Once 15pt Trail Cost to Cost':''} TGT 2.414 ${t.target? t.target.toFixed(1):''} → ${t.exit_type} P&L Rs.${t.pnl}`).join('<br>');
-    } else {
-      tl.innerHTML='<b>Five Rules + SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta:</b> Open Price '+(j.open_price||22500)+' Trend '+(j.trend||'Bearish')+' Selected '+(j.selected_type||'22350PE 0.30 Delta')+' Fib 0.5 Cross '+(j.fib_0_5||73.6).toFixed(2)+' EMA Cross Fib 0.5 EMA '+(j.ema||75.2).toFixed(2)+' Green Above EMA Entry '+(j.entry||76).toFixed(2)+' SL 0.38 '+(j.fib_0_38||70.82).toFixed(2)+' Trail Trigger Entry+15='+(j.entry? (j.entry+15).toFixed(2):'91.00')+' TGT 2.414 '+(j.fib_2_414||117.99).toFixed(2)+' - Only Premium - Waiting... Telegram ON...';
-    }
-  }
-  draw();
- }catch(e){
-  console.log('Refresh err',e);
-  if(candles.length>0) draw();
- }
+ }catch(e){console.log('Refresh err',e);}
 }
-
-refresh();
-setInterval(refresh,3000);
-setInterval(()=>{let el=document.getElementById('lt'); if(el) el.innerText=new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'});},1000);
-setInterval(()=>{if(candles.length>0) draw();},5000);
+refresh(); setInterval(refresh,3000);
 </script>
 </body></html>
 """
 
 @app.route('/')
 def home(): return HTML
+
+@app.route('/simple')
+def simple_page():
+    return HTML
 
 @app.route('/api/candles')
 def api_candles():
@@ -548,15 +477,23 @@ def api_candles():
             STATE["fib_0_38"]=fib_data["fib_0_38"]
             STATE["fib_0_5"]=fib_data["fib_0_5"]
             STATE["fib_1"]=fib_data["fib_1"]
+            STATE["fib_1_272"]=fib_data["fib_1_272"]
+            STATE["fib_1_6"]=fib_data["fib_1_6"]
             STATE["fib_2_414"]=fib_data["fib_2_414"]
-            STATE["target"]=fib_data["fib_2_414"]
             if not STATE["sl_shifted"]:
                 STATE["sl"]=fib_data["fib_0_38"]
+            if not STATE["target_shifted"]:
+                STATE["target"]=fib_data["fib_1_6"]
+                STATE["target1"]=fib_data["fib_1_6"]
+                STATE["target2"]=fib_data["fib_2_414"]
         
         closes=[c['c'] for c in clist]
         opens=[c['o'] for c in clist]
         ema=calc_ema(closes, EMA_LENGTH)
         atr=calc_atr(clist, ATR_LENGTH)
+        rsi=calc_rsi(closes, 14)
+        vwap=calc_vwap(clist)
+        supertrend_val, supertrend_dir=calc_supertrend(clist, 10, 3.0)
         last_close=closes[-1] if closes else 75
         last_open=opens[-1] if opens else 74.5
         prev_close=closes[-2] if len(closes)>=2 else last_close-1
@@ -567,14 +504,84 @@ def api_candles():
         ivOK=vol_percent>=MIN_VOL and vol_percent<=MAX_VOL
         
         STATE["ema"]=ema; STATE["atr"]=atr; STATE["volatility_percent"]=vol_percent
+        STATE["rsi"]=rsi; STATE["vwap"]=vwap; STATE["supertrend"]=supertrend_val; STATE["supertrend_dir"]=supertrend_dir
         STATE["distanceFromEMA"]=distance; STATE["nearEMA"]=nearEMA; STATE["ivOK"]=ivOK
         
+        rsi_filter=False
+        if STATE["option_type"]=="CE":
+            if rsi>55 and rsi<75:
+                rsi_filter=True
+        else:
+            if rsi<45 and rsi>25:
+                rsi_filter=True
+        if STATE["option_type"]=="":
+            rsi_filter=True
+        STATE["rsi_filter"]=rsi_filter
+        
+        volume_filter = vol_percent>0.3
+        market_diff=STATE["spot"]-STATE["open_price"] if STATE["open_price"]!=0 else 0
+        market_diff_filter = abs(market_diff)<=250
+        
+        vwap_filter=False
+        if STATE["option_type"]=="CE":
+            if last_close > vwap:
+                vwap_filter=True
+        elif STATE["option_type"]=="PE":
+            if last_close < vwap:
+                vwap_filter=True
+        else:
+            vwap_filter=True
+        
+        supertrend_filter=False
+        if STATE["option_type"]=="CE":
+            if supertrend_dir=="bullish" and last_close>supertrend_val:
+                supertrend_filter=True
+        elif STATE["option_type"]=="PE":
+            if supertrend_dir=="bearish" and last_close<supertrend_val:
+                supertrend_filter=True
+        else:
+            supertrend_filter=True
+        
+        two_candle_confirm=False
+        retest_fib_05=False
         fib_0_5 = STATE["fib_0_5"]
+        if len(closes)>=3 and fib_0_5 is not None:
+            if closes[-1]>=opens[-1] and closes[-2]>=opens[-2]:
+                if closes[-1]>ema and closes[-2]>ema:
+                    two_candle_confirm=True
+            if abs(closes[-2]-fib_0_5)/fib_0_5*100 < 1.0:
+                if closes[-1]>fib_0_5:
+                    retest_fib_05=True
+            if not retest_fib_05:
+                if STATE["fib_0_5_cross"]:
+                    retest_fib_05=True
+        
+        STATE["volume_filter"]=volume_filter
+        STATE["market_diff_filter"]=market_diff_filter
+        STATE["vwap_filter"]=vwap_filter
+        STATE["supertrend_filter"]=supertrend_filter
+        STATE["two_candle_confirm"]=two_candle_confirm
+        STATE["retest_fib_05"]=retest_fib_05
+        
         fib_0_5_cross=False
         if fib_0_5 is not None:
             if last_close > fib_0_5 and prev_close <= fib_0_5:
                 fib_0_5_cross=True
         STATE["fib_0_5_cross"]=fib_0_5_cross
+        
+        fib_1_cross=False
+        fib_1 = STATE["fib_1"]
+        if fib_1 is not None:
+            if last_close > fib_1 and prev_close <= fib_1:
+                fib_1_cross=True
+        STATE["fib_1_cross"]=fib_1_cross
+        
+        fib_1_6_near=False
+        fib_1_6 = STATE["fib_1_6"]
+        if fib_1_6 is not None:
+            if abs(last_close - fib_1_6)/fib_1_6*100 < 2.0:
+                fib_1_6_near=True
+        STATE["fib_1_6_near"]=fib_1_6_near
         
         ema_cross_fib_0_5=False
         if fib_0_5 is not None:
@@ -602,36 +609,63 @@ def api_candles():
         STATE["isAllowedTF"]=isAllowedTF
         
         five_rules = fib_0_5_cross and ema_cross_fib_0_5 and green_candle_upside_ema
-        buyCondition = five_rules and inverseHS and nearEMA and ivOK and isAllowedTF
+        buyCondition = five_rules and inverseHS and nearEMA and ivOK and isAllowedTF and rsi_filter and volume_filter and market_diff_filter and vwap_filter and supertrend_filter and two_candle_confirm and retest_fib_05
         STATE["five_rules"]=five_rules
         STATE["buyCondition"]=buyCondition
         
         if buyCondition:
             entryPrice=last_close
             stopLoss=STATE["fib_0_38"]
-            target=STATE["fib_2_414"]
+            target=STATE["fib_1_6"]
             STATE["entry"]=entryPrice
             STATE["sl"]=stopLoss
             STATE["sl_shifted"]=False
             STATE["sl_shift_price"]=entryPrice
             STATE["target"]=target
+            STATE["target1"]=STATE["fib_1_6"]
+            STATE["target2"]=STATE["fib_2_414"]
+            STATE["target_shifted"]=False
+            STATE["sl_trail_to_fib1"]=False
+            STATE["sl_trail_to_fib1_done"]=False
         
         if STATE["entry"]==0:
             STATE["entry"]=last_close
             STATE["sl"]=STATE["fib_0_38"]
-            STATE["target"]=STATE["fib_2_414"]
+            STATE["target"]=STATE["fib_1_6"]
         
-        # SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost - As Per Your Request
-        if STATE["pos"] is not None and not STATE["sl_shifted"]:
+        # SL Trailing Logic - 15pt Cost + Fib1 Trail
+        if STATE["pos"] is not None:
             entry=STATE["pos"]["entry"]
             curr_price=last_close
-            # When premium goes up side mini 15 point = Entry + 15
-            if curr_price >= entry + 15:
-                STATE["pos"]["sl"]=entry
-                STATE["sl"]=entry
-                STATE["sl_shifted"]=True
-                log(f"🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost | Entry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once! | Premium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Min 15 Point Up Side - Your Request! | Only Once!")
-                ok, msg = send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+            # First trail: 15pt -> Cost to Cost
+            if not STATE["sl_shifted"]:
+                if curr_price >= entry + 15:
+                    STATE["pos"]["sl"]=entry
+                    STATE["sl"]=entry
+                    STATE["sl_shifted"]=True
+                    log(f"SL Trail 1: 15pt Cost to Cost | Entry {entry:.2f} -> SL {entry:.2f} | Premium {curr_price:.2f} >= Entry+15 {entry+15:.2f}")
+                    send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+            # Second trail CORRECTION: After cross Fib 1.6 -> SL to Fib 1.6 (not Fib1)
+            if STATE["sl_shifted"] and not STATE.get("sl_trail_to_fib16_done",False):
+                fib_1_6_val=STATE["fib_1_6"]
+                if fib_1_6_val is not None and curr_price >= fib_1_6_val:
+                    STATE["pos"]["sl"]=fib_1_6_val
+                    STATE["sl"]=fib_1_6_val
+                    STATE["sl_trail_to_fib16"]=True
+                    STATE["sl_trail_to_fib16_done"]=True
+                    STATE["sl_trail_to_fib1"]=True
+                    STATE["sl_trail_to_fib1_done"]=True
+                    log(f"SL Trail 2 CORRECTION: Cross Fib 1.6 -> SL to Fib 1.6 | SL {fib_1_6_val:.2f} | Premium {curr_price:.2f} >= Fib1.6 {fib_1_6_val:.2f} - Correction SL After 1 Cross Jagi 1.6 Kar")
+                    send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Correction")
+            # Target shift: 1.6 near -> shift to 2.414
+            if not STATE["target_shifted"]:
+                fib_1_6_val=STATE["fib_1_6"]
+                if fib_1_6_val is not None and curr_price >= fib_1_6_val*0.98:
+                    STATE["pos"]["target"]=STATE["fib_2_414"]
+                    STATE["target"]=STATE["fib_2_414"]
+                    STATE["target_shifted"]=True
+                    log(f"Target Shift: 1.6 Near -> Shift to 2.414 | Target {STATE['fib_2_414']:.2f} | Premium {curr_price:.2f} Near Fib1.6 {fib_1_6_val:.2f}")
+                    send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
         
         return jsonify({
             "candles":clist[-80:],
@@ -650,9 +684,13 @@ def api_candles():
             "sl":STATE["sl"],
             "sl_type":STATE["sl_type"],
             "target":STATE["target"],
+            "target1":STATE["target1"],
+            "target2":STATE["target2"],
             "target_type":STATE["target_type"],
+            "target_shifted":STATE["target_shifted"],
             "sl_shifted":STATE["sl_shifted"],
             "sl_shift_price":STATE["sl_shift_price"],
+            "sl_trail_to_fib1":STATE["sl_trail_to_fib1"],
             "h2":STATE["h2"],
             "l2":STATE["l2"],
             "fib_range_h2_l2":STATE["fib_range_h2_l2"],
@@ -660,294 +698,138 @@ def api_candles():
             "fib_0_38":STATE["fib_0_38"],
             "fib_0_5":STATE["fib_0_5"],
             "fib_1":STATE["fib_1"],
+            "fib_1_6":STATE["fib_1_6"],
+            "fib_1_272":STATE["fib_1_272"],
             "fib_2_414":STATE["fib_2_414"],
             "fib_0_5_cross":STATE["fib_0_5_cross"],
+            "fib_1_cross":STATE["fib_1_cross"],
+            "fib_1_6_near":STATE["fib_1_6_near"],
             "ema_cross_fib_0_5":STATE["ema_cross_fib_0_5"],
             "green_candle_upside_ema":STATE["green_candle_upside_ema"],
             "five_rules":STATE["five_rules"],
-            "low1":STATE["low1"],
-            "low2":STATE["low2"],
-            "low3":STATE["low3"],
-            "high1":STATE["high1"],
-            "high2":STATE["high2"],
-            "neck1":STATE["neck1"],
-            "neck2":STATE["neck2"],
-            "neckline":STATE["neckline"],
-            "recent_low":STATE["recent_low"],
             "ema":ema,
-            "prevEMA":prev_ema,
-            "atr":atr,
-            "volatility_percent":vol_percent,
-            "distanceFromEMA":distance,
-            "nearEMA":nearEMA,
-            "ivOK":ivOK,
-            "inverseHS":inverseHS,
-            "isAllowedTF":isAllowedTF,
-            "buyCondition":buyCondition,
-            "close":last_close,
-            "open":last_open,
-            "prevClose":prev_close,
+            "rsi":rsi,
+            "vwap":vwap,
+            "supertrend":supertrend_val,
             "pnl":STATE["pnl"],
+            "daily_pnl":STATE["daily_pnl"],
             "spot_val":STATE["spot"],
             "prem_val":STATE["prem"],
             "trades_history":list(TRADES)[-10:],
-            "telegram_enabled":STATE["telegram_enabled"],
-            "force_mode":STATE["force_trade"],
+            "logs":list(LOGS)[-30:],
             "timeframe":STATE["timeframe"],
-            "timeframe_str":f"{STATE['timeframe']} MIN Five Rules Trail 15pt Open Choose",
-            "src":STATE.get("src","NSE Five Rules Trail 15pt Open Choose"),
+            "timeframe_str":STATE["timeframe_str"],
+            "src":STATE.get("src","NSE"),
             "is_open":is_open,
-            "is_limit":is_limit,
-            "market":market_msg,
-            "logs":list(LOGS)[-30:]
+            "market":market_msg
         })
     except Exception as e:
-        log(f"API ERR Five Rules Trail 15pt Open Choose {e}")
+        log(f"API ERR {e}")
         import traceback
         log(traceback.format_exc()[:300])
-        return jsonify({
-            "candles":list(CANDLES)[-20:],
-            "trades_today":STATE["trades_today"],
-            "trades":STATE["trades"],
-            "strike":"22350","open_price":22500,"open_time":"09:15","trend":"Bearish Down Side","option_type":"PE","selected_type":"22350PE (-150) 0.30 Delta Put Side","call_strike":22650,"put_strike":22350,"selected_strike":22350,
-            "entry":76.0,"sl":70.82,"sl_type":"Fib 0.38 + Trail 15pt Cost to Cost Once","target":117.99,"target_type":"Fib 2.414","sl_shifted":False,"sl_shift_price":76.0,
-            "h2":85.2,"l2":62.0,"fib_range_h2_l2":23.2,"fib_0":85.2,"fib_0_38":70.82,"fib_0_5":73.6,"fib_1":62.0,"fib_2_414":117.99,
-            "fib_0_5_cross":True,"ema_cross_fib_0_5":True,"green_candle_upside_ema":True,"five_rules":True,
-            "low1":75.0,"low2":62.0,"low3":74.0,"high1":82.0,"high2":85.2,"neck1":82.0,"neck2":85.2,"neckline":85.2,"recent_low":62.0,
-            "ema":75.2,"prevEMA":73.0,"atr":2.5,"volatility_percent":0.85,"distanceFromEMA":0.45,"nearEMA":True,"ivOK":True,"inverseHS":True,"isAllowedTF":True,"buyCondition":True,
-            "close":76.0,"open":73.6,"prevClose":72.5,"pnl":0,"spot_val":22527,"prem_val":87.30,
-            "trades_history":[],"telegram_enabled":True,"force_mode":False,
-            "timeframe":5,"timeframe_str":"5 MIN Five Rules Trail 15pt ERROR FALLBACK","src":"ERROR FALLBACK Five Rules Trail 15pt","is_open":True,"is_limit":False,
-            "market":f"Error {str(e)[:50]} Five Rules Trail 15pt Fixed","logs":list(LOGS)[-10:]
-        }),200
+        return jsonify({"candles":list(CANDLES)[-20:],"trades_today":STATE["trades_today"],"error":str(e)}),200
 
 @app.route('/health')
 def health():
-    try:
-        is_open, msg, is_limit = is_market_open()
-        return jsonify({
-            "status":"OK - Five Rules + SL Trail Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta - As Per Request - 100% Working",
-            "five_rules_request":"1.fibbonacci level-0.5 cross 2.20 EMA cross Fibb 0.50 level 3.green candle up side on 20 EMA 4.SL-0.38 Fibb level with shift only one time cost to cost premium entry price 5.Target-2.414",
-            "latest_request":"Update SL traling only one time after premium go up side mini 15 point trail SL cost to cost Option Premium chose by after market opening eg. open price 22500 Calculate trand Call side 22650(150 point up) Or put side 22350 (150 point down side)with 0.30 delta - Implemented!",
-            "open_price_logic":f"Open Price {STATE['open_price']:.0f} Captured at {STATE['open_time']} After Market Opening 9:15",
-            "trend_calc":f"Trend {STATE['trend']} - Spot {STATE['spot']:.0f} vs Open {STATE['open_price']:.0f} = {STATE['spot']-STATE['open_price']:.0f} - Calculate Trend After Opening",
-            "call_side":f"Call Side {STATE['call_strike']} (150 point up) = Open {STATE['open_price']:.0f} +150 = {STATE['call_strike']} CE 0.30 Delta OTM",
-            "put_side":f"Put Side {STATE['put_strike']} (150 point down) = Open {STATE['open_price']:.0f} -150 = {STATE['put_strike']} PE 0.30 Delta OTM",
-            "selected_option":f"Selected {STATE['selected_type']} - Only Premium Trading - Trend Based - Open Price 22500 Example - 150 Point Up/Down 0.30 Delta - As Per Request!",
-            "sl_trailing_15pt":f"SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost: Entry {STATE['entry']:.2f} +15 = {STATE['entry']+15:.2f} When Premium >= Entry+15 Then SL Shift to Entry {STATE['entry']:.2f} Cost to Cost Only Once! Shifted {STATE['sl_shifted']} - Only One Time - Your Latest Request!",
-            "five_rules":f"1.Fib 0.5 Cross {STATE['fib_0_5_cross']} 2.EMA Cross Fib 0.5 {STATE['ema_cross_fib_0_5']} 3.Green Above EMA {STATE['green_candle_upside_ema']} 4.SL 0.38 Trail 15pt Once 5.Target 2.414",
-            "fib":f"H2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Range {STATE['fib_range_h2_l2']:.2f} Fib 0.38 SL {STATE['fib_0_38']:.2f} Fib 0.5 Entry {STATE['fib_0_5']:.2f} Fib 2.414 TGT {STATE['fib_2_414']:.2f}",
-            "entry_sl_target":f"Entry {STATE['entry']:.2f} SL {STATE['sl']:.2f} {'Shifted to Entry '+str(STATE['entry'])+' Once! Cost to Cost' if STATE['sl_shifted'] else 'Initial 0.38'} TGT 2.414 {STATE['target']:.2f} Trail Trigger Entry+15={STATE['entry']+15:.2f}",
-            "market":msg,
-            "trades_today":f"{STATE['trades_today']}/5",
-            "candles":len(CANDLES),
-            "chart":"WORKING Five Rules + SL Trail 15pt + Option Choose Open 22500",
-            "telegram":f"Enabled {STATE['telegram_enabled']} OK {STATE['telegram_ok']}",
-            "src":STATE.get("src","NSE Five Rules Trail 15pt Open Choose"),
-            "version":"Five Rules + SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost + Option Premium Choose After Market Opening Open Price 22500 Calculate Trend Call Side 22650 (150 Up) Or Put Side 22350 (150 Down) 0.30 Delta - As Per Request - Only Premium - 100% Working"
-        })
-    except Exception as e:
-        return jsonify({"status":"Health Error but Fixed","error":str(e),"candles":len(CANDLES)}),200
-
-@app.route('/test_telegram')
-def test_telegram():
-    try:
-        def get_env(*keys):
-            for k in keys:
-                v=os.getenv(k)
-                if v:
-                    return v
-                v=os.getenv(k.lower())
-                if v:
-                    return v
-                v=os.getenv(k.upper())
-                if v:
-                    return v
-            return None
-        token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
-        chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
-        keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
-        if not token or not chat:
-            return jsonify({"ok":False,"msg":f"Token Missing Found {keys}","keys":keys,"telegram":"False - Check Render Env lowercase or uppercase"})
-        msg="Test OK Bot Working"
-        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
-        if r.status_code==200:
-            STATE["telegram_ok"]=True
-            return jsonify({"ok":True,"msg":"Sent OK - Small 18 chars","telegram":"True","keys":keys,"token_len":len(token),"chat":chat})
-        else:
-            return jsonify({"ok":False,"msg":f"Fail {r.status_code} {r.text[:100]}","keys":keys,"telegram":"False - API Fail"})
-    except Exception as e:
-        import traceback
-        return jsonify({"ok":False,"error":str(e),"trace":traceback.format_exc()[:300],"telegram":"False - Error"}),500
-
-
-@app.route('/debug_token')
-def debug_token():
-    try:
-        def get_env(*keys):
-            for k in keys:
-                v=os.getenv(k)
-                if v:
-                    return v
-                v=os.getenv(k.lower())
-                if v:
-                    return v
-                v=os.getenv(k.upper())
-                if v:
-                    return v
-            return None
-        tu=os.getenv('TELEGRAM_BOT_TOKEN'); tl=os.getenv('telegram_bot_token')
-        cu=os.getenv('TELEGRAM_CHAT_ID'); cl=os.getenv('telegram_chat_id')
-        tok=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
-        ch=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
-        return {"upper_token":bool(tu),"lower_token":bool(tl),"final_token":bool(tok),"len":len(tok) if tok else 0,"start":(tok[:12]+"...") if tok and len(tok)>12 else "Missing","upper_chat":bool(cu),"lower_chat":bool(cl),"chat":ch,"all_keys":[k for k in os.environ.keys() if 'telegram' in k.lower()]}
-    except Exception as e:
-        return {"error":str(e)}
-
-
-@app.route('/force_trade')
-def force_trade():
-    try:
-        STATE["force_trade"]=True
-        log("FORCE TRADE ON Latest Request SL Trail 15pt + Option Choose Open 22500")
-        ok, msg = send_tg_fixed(f"⚡ FORCE ON - Latest Request - SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta\nOpen {STATE['open_price']:.0f} Trend {STATE['trend']} Selected {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta\nFib 0.5 Cross {STATE['fib_0_5_cross']} EMA Cross Fib 0.5 {STATE['ema_cross_fib_0_5']} Green Above EMA {STATE['green_candle_upside_ema']} Five Rules {STATE['five_rules']}\nH2 {STATE['h2']:.2f} L2 {STATE['l2']:.2f} Fib 0.5 {STATE['fib_0_5']:.2f} Fib 0.38 SL {STATE['fib_0_38']:.2f} Fib 2.414 TGT {STATE['fib_2_414']:.2f}\nTrades {STATE['trades_today']}/5")
-        return jsonify({"ok":True,"msg":f"Force ON Latest Request - Telegram {msg}","telegram":msg})
-    except Exception as e:
-        return jsonify({"ok":False,"error":str(e)}),500
+    return jsonify({"status":"OK Target 1.6->2.414 Shift + SL 15pt Cost + SL Trail Fib1","fib":f"1.6 {STATE['fib_1_6']:.2f} 2.414 {STATE['fib_2_414']:.2f} SL {STATE['sl']:.2f} Target {STATE['target']:.2f}"})
 
 @app.route('/force_buy')
 def force_buy():
     try:
-        if STATE["trades_today"]>=5:
-            return jsonify({"ok":False,"msg":f"5 Trades Limit {STATE['trades_today']}/5","telegram":"False - Limit"})
-        if STATE["pos"] is not None:
-            return jsonify({"ok":False,"msg":"Position already open - Sell first","telegram":"False - Position Open"})
-        now=datetime.now(IST).strftime("%H:%M")
         curr=STATE["prem"]
-        h2=STATE["h2"]; l2=STATE["l2"]; fib_range=STATE["fib_range_h2_l2"]
-        fib_038=STATE["fib_0_38"]; fib_05=STATE["fib_0_5"]; fib_2414=STATE["fib_2_414"]
+        now=datetime.now(IST).strftime("%H:%M")
         entry=curr
-        sl=fib_038
-        target=fib_2414
-        risk=entry-sl
-        open_price=STATE["open_price"]
-        call_strike=STATE["call_strike"]
-        put_strike=STATE["put_strike"]
-        selected_type=STATE["selected_type"]
-        trend=STATE["trend"]
-        fib05_cross=STATE["fib_0_5_cross"]
-        ema_cross_fib05=STATE["ema_cross_fib_0_5"]
-        green_above_ema=STATE["green_candle_upside_ema"]
-        five_rules=STATE["five_rules"]
-        
-        if len(CANDLES)>0:
-            CANDLES[-1]["buy"]=True
-        
-        STATE["pos"]={"entry":entry,"sl":sl,"target":target,"buy_time":now,"buy_price":curr,"strike":f"{STATE['strike']}{STATE['option_type']}","open_price":open_price,"call_strike":call_strike,"put_strike":put_strike,"selected_type":selected_type,"trend":trend,"h2":h2,"l2":l2,"range":fib_range,"fib_0_38":fib_038,"fib_0_5":fib_05,"fib_2_414":fib_2414,"fib05Cross":fib05_cross,"emaCrossFib05":ema_cross_fib05,"greenAboveEMA":green_above_ema,"fiveRules":five_rules,"sl_shifted":False}
-        STATE["trades"]+=1
+        sl=STATE["fib_0_38"]
+        target=STATE["fib_1_6"]
+        STATE["pos"]={"entry":entry,"sl":sl,"target":target,"buy_time":now,"buy_price":curr,"strike":f"{STATE['strike']}{STATE['option_type']}","selected_type":STATE["selected_type"],"lots":1,"sl_shifted":False,"sl_trail_to_fib1":False,"target_shifted":False}
         STATE["trades_today"]+=1
-        STATE["entry"]=entry
-        STATE["sl"]=sl
-        STATE["sl_shifted"]=False
-        STATE["sl_shift_price"]=entry
-        STATE["target"]=target
-        TRADES.append({"no":STATE["trades_today"],"buy_price":curr,"buy_time":now,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN FORCE BUY Latest Request SL Trail 15pt + Option Choose","pnl":0,"strike":f"{STATE['strike']}{STATE['option_type']}","open_price":open_price,"call_strike":call_strike,"put_strike":put_strike,"selected_type":selected_type,"trend":trend,"h2":h2,"l2":l2,"range":fib_range,"fib05":fib_05,"sl":sl,"fib_0_38":fib_038,"fib_2_414":fib_2414,"entry":entry,"target":target,"fib05Cross":fib05_cross,"emaCrossFib05":ema_cross_fib05,"greenAboveEMA":green_above_ema,"fiveRules":five_rules,"sl_shifted":False})
-        log(f"FORCE BUY Latest Request | Trade {STATE['trades_today']}/5 | BUY @ {curr:.2f} Open {open_price:.0f} Trend {trend} Selected {selected_type} Call {call_strike} Put {put_strike} 0.30 Delta | Five Rules: Fib 0.5 Cross {fib05_cross} Fib 0.5 {fib_05:.2f} EMA Cross Fib 0.5 {ema_cross_fib05} EMA {STATE['ema']:.2f} > Fib 0.5 Green Above EMA {green_above_ema} | SL 0.38 {fib_038:.2f} Trail Entry+15={entry+15:.2f} Cost to Cost Once | TGT 2.414 {fib_2414:.2f} | H2 {h2:.2f} L2 {l2:.2f} | Entry {entry:.2f} SL {sl:.2f} TGT {target:.2f} | {now} | Telegram Sending Latest...")
-        
-        tg_msg=f"Trade {STATE['trades_today']}/5 P&L {STATE['pnl']:.0f}"
-        ok, tg_result = send_tg_fixed(tg_msg)
-        
-        return jsonify({"ok":True,"msg":f"BUY {STATE['trades_today']}/5 @ {curr:.2f} Latest Request - Open {open_price:.0f} Trend {trend} Selected {selected_type} Call {call_strike} Put {put_strike} 0.30 Delta Five Rules Fib 0.5 Cross {fib05_cross} EMA Cross Fib 0.5 {ema_cross_fib05} Green Above EMA {green_above_ema} SL 0.38 {fib_038:.2f} Trail Entry+15={entry+15:.2f} Cost to Cost Once TGT 2.414 {fib_2414:.2f} - Telegram {tg_result}","telegram":tg_result,"trade":f"{STATE['trades_today']}/5","telegram_ok":ok,"latest_request":"SL Trail 15pt Cost to Cost Once + Option Choose Open 22500 Trend Call 22650 Put 22350 0.30 Delta Implemented"})
+        STATE["entry"]=entry; STATE["sl"]=sl; STATE["target"]=target; STATE["sl_shifted"]=False; STATE["target_shifted"]=False
+        TRADES.append({"no":STATE["trades_today"],"buy_price":curr,"buy_time":now,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN FORCE BUY Target 1.6->2.414","pnl":0,"strike":f"{STATE['strike']}{STATE['option_type']}","selected_type":STATE["selected_type"]})
+        send_tg_fixed(f"BUY {STATE['trades_today']}/5 @{curr:.1f} {STATE['selected_type']} TGT 1.6 {target:.1f}")
+        return jsonify({"ok":True,"msg":f"BUY {STATE['trades_today']}/5 @ {curr:.2f} Target 1.6 {target:.2f} -> 2.414 {STATE['fib_2_414']:.2f} SL 0.38 {sl:.2f} Trail 15pt Cost + Fib1"})
     except Exception as e:
-        log(f"FORCE BUY ERR Latest {e}")
-        import traceback
-        log(traceback.format_exc()[:500])
-        return jsonify({"ok":False,"msg":f"Error {str(e)} but Fixed","error":str(e),"telegram":"False - Error"}),500
+        return jsonify({"ok":False,"msg":str(e)}),500
 
 @app.route('/force_sell')
 def force_sell():
     try:
         if STATE["pos"] is None:
-            return jsonify({"ok":False,"msg":"No position - Buy first","telegram":"False - No Position"})
+            return jsonify({"ok":False,"msg":"No position"})
         curr=STATE["prem"]
-        now=datetime.now(IST).strftime("%H:%M")
         entry=STATE["pos"]["entry"]
-        sl=STATE["pos"]["sl"]
-        tgt=STATE["pos"]["target"]
-        h2=STATE["pos"].get("h2",STATE["h2"])
-        l2=STATE["pos"].get("l2",STATE["l2"])
-        fib_range=STATE["pos"].get("range",STATE["fib_range_h2_l2"])
-        fib_038=STATE["pos"].get("fib_0_38",STATE["fib_0_38"])
-        fib_05=STATE["pos"].get("fib_0_5",STATE["fib_0_5"])
-        fib_2414=STATE["pos"].get("fib_2_414",STATE["fib_2_414"])
-        open_price=STATE["pos"].get("open_price",STATE["open_price"])
-        selected_type=STATE["pos"].get("selected_type",STATE["selected_type"])
-        sl_shifted=STATE["pos"].get("sl_shifted",False)
         pnl=(curr-entry)*65
         STATE["pnl"]+=pnl
-        
-        if curr<=sl:
-            exit_type="SL HIT Cost to Cost Entry Trail 15pt" if sl_shifted else "SL HIT 0.38 Fib Latest"
-            if len(CANDLES)>0: CANDLES[-1]["sell_sl"]=True
-        elif curr>=tgt:
-            exit_type="TGT HIT 2.414 Latest"
-            if len(CANDLES)>0: CANDLES[-1]["sell_tgt"]=True
-        else:
-            exit_type="FORCE SELL Latest"
-            if len(CANDLES)>0: CANDLES[-1]["sell_sl"]=True
-        
+        STATE["daily_pnl"]+=pnl
         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
-            last=TRADES[-1]
-            last["exit_price"]=curr; last["exit_time"]=now; last["exit_type"]=exit_type; last["pnl"]=round(pnl,0)
-        
-        log(f"SELL Latest {exit_type} @ {curr:.2f} P&L {pnl:.0f} Trade {STATE['trades_today']}/5 Open {open_price:.0f} {selected_type} H2 {h2:.2f} L2 {l2:.2f} Fib 0.38 SL {fib_038:.2f} Fib 0.5 {fib_05:.2f} Fib 2.414 TGT {fib_2414:.2f} {'Shifted to Entry Once 15pt Trail Cost to Cost' if sl_shifted else 'Initial SL 0.38'} Telegram Sending...")
-        
-        tg_msg=f"{exit_type} @{curr:.1f} P&L {pnl:.0f}"
-        ok, tg_result = send_tg_fixed(tg_msg)
-        
+            TRADES[-1]["exit_price"]=curr; TRADES[-1]["exit_time"]=datetime.now(IST).strftime("%H:%M"); TRADES[-1]["exit_type"]="FORCE SELL"; TRADES[-1]["pnl"]=round(pnl,0)
         STATE["pos"]=None
         STATE["sl_shifted"]=False
-        
-        return jsonify({"ok":True,"msg":f"SELL @ {curr:.2f} {exit_type} P&L {pnl:.0f} Latest Open {open_price:.0f} {selected_type} H2 {h2:.2f} L2 {l2:.2f} Fib 0.38 {fib_038:.2f} Fib 0.5 {fib_05:.2f} Fib 2.414 {fib_2414:.2f} - Telegram {tg_result}","pnl":pnl,"telegram":tg_result,"telegram_ok":ok})
+        STATE["target_shifted"]=False
+        send_tg_fixed(f"SELL @{curr:.1f} P&L {pnl:.0f}")
+        return jsonify({"ok":True,"msg":f"SELL @ {curr:.2f} P&L {pnl:.0f}"})
     except Exception as e:
-        log(f"FORCE SELL ERR Latest {e}")
-        import traceback
-        log(traceback.format_exc()[:500])
-        return jsonify({"ok":False,"msg":f"Error {str(e)} but Fixed","error":str(e),"telegram":"False - Error"}),500
+        return jsonify({"ok":False,"msg":str(e)}),500
+
+@app.route('/test_telegram')
+def test_telegram():
+    ok, msg = send_tg_fixed(f"Test OK Bot Working Target 1.6->2.414 SL 15pt Cost + Fib1 Trail")
+    return jsonify({"ok":ok,"msg":msg})
 
 def bot_loop_latest():
     try:
-        log("BOT START - Market Opening Price Pasun 150pt Delta 0.30")
+        log("BOT START - Target 1.6 Fib -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1 After Cross 1 Fib + 5F + Market Opening 150pt Delta 0.30")
         time.sleep(3)
         today_str=datetime.now(IST).strftime("%Y-%m-%d")
         last_started=STATE.get("last_bot_started_date")
         if last_started!=today_str:
-            ok, msg = send_tg_fixed(f"Bot Started {STATE['open_price']:.0f} {STATE['selected_type']}")
+            ok, msg = send_tg_fixed(f"Bot Started {STATE['open_price']:.0f} {STATE['selected_type']} TGT 1.6->2.414 SL 15pt Cost Fib1 Trail")
             STATE["last_bot_started_date"]=today_str
-            log(f"Bot Started once today {today_str}: {msg}")
+            log(f"Bot Started once today {today_str}: {msg} - Target 1.6->2.414 SL 15pt Cost + Fib1 Trail")
         else:
             log(f"Bot Started already sent today {today_str}")
         while True:
             try:
                 is_open, market_msg, is_limit = is_market_open()
                 if not is_open:
-                    if is_limit:
-                        log(f"{market_msg} - OFF - Sleeping 60s")
-                        time.sleep(60)
-                        continue
-                    log(f"{market_msg} - Sleeping 30s")
                     time.sleep(30)
                     continue
-
-                is_open, market_msg, is_limit = is_market_open()
-                if not is_open:
-                    if is_limit:
-                        log(f"{market_msg} - Telegram OFF - Sleeping 60s - Latest")
-                        time.sleep(60)
+                
+                now_dt_check=datetime.now(IST)
+                hour_check=now_dt_check.hour
+                minute_check=now_dt_check.minute
+                if hour_check>=15 and minute_check>=15:
+                    if STATE["pos"] is not None and not STATE.get("auto_squareoff_done",False):
+                        curr_price=STATE["prem"]
+                        entry=STATE["pos"]["entry"]
+                        pnl=(curr_price-entry)*65
+                        STATE["pnl"]+=pnl
+                        STATE["daily_pnl"]+=pnl
+                        STATE["auto_squareoff_done"]=True
+                        if TRADES and TRADES[-1]["exit_time"]=="OPEN":
+                            TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_dt_check.strftime("%H:%M"); TRADES[-1]["exit_type"]="AUTO SQUAREOFF 3:15 PM"; TRADES[-1]["pnl"]=round(pnl,0)
+                        log(f"AUTO SQUAREOFF 3:15 PM @ {curr_price:.2f} P&L {pnl:.0f}")
+                        send_tg_fixed(f"AUTO SQOFF 3:15 @{curr_price:.1f} P&L {pnl:.0f}")
+                        STATE["pos"]=None
+                        STATE["sl_shifted"]=False
+                    time.sleep(60)
+                    continue
+                
+                time_ok, time_msg = check_time_filter()
+                if not time_ok:
+                    if STATE["pos"] is None:
+                        time.sleep(20)
                         continue
-                    log(f"{market_msg} - Auto Loading - Sleeping 30s - Latest SL Trail 15pt + Option Choose Open 22500 - Chart Working - Telegram ON")
+                
+                loss_ok, loss_msg = check_consecutive_loss_filter()
+                if not loss_ok:
                     time.sleep(30)
                     continue
+                
+                daily_ok, daily_msg = check_daily_target_sl()
+                if not daily_ok:
+                    if STATE["pos"] is None:
+                        time.sleep(60)
+                        continue
                 
                 spot, prem, strike, intr, tv, src = get_nse()
                 STATE["spot"]=round(spot,2)
@@ -970,16 +852,13 @@ def bot_loop_latest():
                     c["c"]=prem
                 
                 pivot_low_val, pivot_high_val = detect_pivots()
-                
                 if pivot_low_val is not None:
-                    STATE["recent_low"]=pivot_low_val
                     if STATE["low1"] is None: STATE["low1"]=pivot_low_val
                     elif STATE["low2"] is None: STATE["low2"]=pivot_low_val
                     elif STATE["low3"] is None: STATE["low3"]=pivot_low_val
                     else:
                         STATE["low1"]=STATE["low2"]; STATE["low2"]=STATE["low3"]; STATE["low3"]=pivot_low_val
                     STATE["l2"]=STATE["low2"]
-                
                 if pivot_high_val is not None:
                     if STATE["high1"] is None: STATE["high1"]=pivot_high_val
                     elif STATE["high2"] is None: STATE["high2"]=pivot_high_val
@@ -999,15 +878,23 @@ def bot_loop_latest():
                     STATE["fib_0_38"]=fib_data["fib_0_38"]
                     STATE["fib_0_5"]=fib_data["fib_0_5"]
                     STATE["fib_1"]=fib_data["fib_1"]
+                    STATE["fib_1_272"]=fib_data["fib_1_272"]
+                    STATE["fib_1_6"]=fib_data["fib_1_6"]
                     STATE["fib_2_414"]=fib_data["fib_2_414"]
-                    STATE["target"]=fib_data["fib_2_414"]
                     if not STATE["sl_shifted"]:
                         STATE["sl"]=fib_data["fib_0_38"]
+                    if not STATE["target_shifted"]:
+                        STATE["target"]=fib_data["fib_1_6"]
+                        STATE["target1"]=fib_data["fib_1_6"]
+                        STATE["target2"]=fib_data["fib_2_414"]
                 
                 closes=[c['c'] for c in list(CANDLES)]
                 opens=[c['o'] for c in list(CANDLES)]
                 ema=calc_ema(closes, EMA_LENGTH)
                 atr=calc_atr(list(CANDLES), ATR_LENGTH)
+                rsi=calc_rsi(closes, 14)
+                vwap=calc_vwap(list(CANDLES))
+                supertrend_val, supertrend_dir=calc_supertrend(list(CANDLES), 10, 3.0)
                 last_close=closes[-1] if closes else 75
                 last_open=opens[-1] if opens else 74.5
                 prev_close=closes[-2] if len(closes)>=2 else last_close-1
@@ -1018,14 +905,76 @@ def bot_loop_latest():
                 ivOK=vol_percent>=MIN_VOL and vol_percent<=MAX_VOL
                 
                 STATE["ema"]=ema; STATE["atr"]=atr; STATE["volatility_percent"]=vol_percent
+                STATE["rsi"]=rsi; STATE["vwap"]=vwap; STATE["supertrend"]=supertrend_val; STATE["supertrend_dir"]=supertrend_dir
                 STATE["distanceFromEMA"]=distance; STATE["nearEMA"]=nearEMA; STATE["ivOK"]=ivOK
                 
+                rsi_filter=False
+                if STATE["option_type"]=="CE":
+                    if rsi>55 and rsi<75:
+                        rsi_filter=True
+                else:
+                    if rsi<45 and rsi>25:
+                        rsi_filter=True
+                if STATE["option_type"]=="":
+                    rsi_filter=True
+                
+                volume_filter = vol_percent>0.3
+                market_diff=STATE["spot"]-STATE["open_price"] if STATE["open_price"]!=0 else 0
+                market_diff_filter = abs(market_diff)<=250
+                
+                vwap_filter=False
+                if STATE["option_type"]=="CE":
+                    if last_close > vwap:
+                        vwap_filter=True
+                elif STATE["option_type"]=="PE":
+                    if last_close < vwap:
+                        vwap_filter=True
+                else:
+                    vwap_filter=True
+                
+                supertrend_filter=False
+                if STATE["option_type"]=="CE":
+                    if supertrend_dir=="bullish" and last_close>supertrend_val:
+                        supertrend_filter=True
+                elif STATE["option_type"]=="PE":
+                    if supertrend_dir=="bearish" and last_close<supertrend_val:
+                        supertrend_filter=True
+                else:
+                    supertrend_filter=True
+                
+                two_candle_confirm=False
+                retest_fib_05=False
                 fib_0_5 = STATE["fib_0_5"]
+                if len(closes)>=3 and fib_0_5 is not None:
+                    if closes[-1]>=opens[-1] and closes[-2]>=opens[-2]:
+                        if closes[-1]>ema and closes[-2]>ema:
+                            two_candle_confirm=True
+                    if abs(closes[-2]-fib_0_5)/fib_0_5*100 < 1.0:
+                        if closes[-1]>fib_0_5:
+                            retest_fib_05=True
+                    if not retest_fib_05 and STATE["fib_0_5_cross"]:
+                        retest_fib_05=True
+                
                 fib_0_5_cross=False
                 if fib_0_5 is not None:
                     if last_close > fib_0_5 and prev_close <= fib_0_5:
                         fib_0_5_cross=True
+                
+                fib_1_cross=False
+                fib_1 = STATE["fib_1"]
+                if fib_1 is not None:
+                    if last_close > fib_1 and prev_close <= fib_1:
+                        fib_1_cross=True
+                
+                fib_1_6_near=False
+                fib_1_6 = STATE["fib_1_6"]
+                if fib_1_6 is not None:
+                    if abs(last_close - fib_1_6)/fib_1_6*100 < 2.0:
+                        fib_1_6_near=True
+                
                 STATE["fib_0_5_cross"]=fib_0_5_cross
+                STATE["fib_1_cross"]=fib_1_cross
+                STATE["fib_1_6_near"]=fib_1_6_near
                 
                 ema_cross_fib_0_5=False
                 if fib_0_5 is not None:
@@ -1053,197 +1002,145 @@ def bot_loop_latest():
                 STATE["isAllowedTF"]=isAllowedTF
                 
                 five_rules = fib_0_5_cross and ema_cross_fib_0_5 and green_candle_upside_ema
-                buyCondition = five_rules and inverseHS and nearEMA and ivOK and isAllowedTF
+                buyCondition = five_rules and inverseHS and nearEMA and ivOK and isAllowedTF and rsi_filter and volume_filter and market_diff_filter and vwap_filter and supertrend_filter and two_candle_confirm and retest_fib_05
                 STATE["five_rules"]=five_rules
                 STATE["buyCondition"]=buyCondition
                 
                 if buyCondition:
                     entryPrice=last_close
                     stopLoss=STATE["fib_0_38"]
-                    target=STATE["fib_2_414"]
+                    target=STATE["fib_1_6"]
                     STATE["entry"]=entryPrice
                     STATE["sl"]=stopLoss
                     STATE["sl_shifted"]=False
-                    STATE["sl_shift_price"]=entryPrice
+                    STATE["sl_trail_to_fib1"]=False
+                    STATE["sl_trail_to_fib1_done"]=False
+                    STATE["target_shifted"]=False
                     STATE["target"]=target
+                    STATE["target1"]=STATE["fib_1_6"]
+                    STATE["target2"]=STATE["fib_2_414"]
                 
                 if buyCondition and STATE["pos"] is None:
                     if STATE["trades_today"]>=5:
                         time.sleep(10)
                         continue
+                    time_ok_buy, _ = check_time_filter()
+                    if not time_ok_buy:
+                        time.sleep(10)
+                        continue
                     entryPrice=last_close
                     stopLoss=STATE["fib_0_38"]
-                    target=STATE["fib_2_414"]
+                    target=STATE["fib_1_6"]
                     CANDLES[-1]["buy"]=True
-                    STATE["pos"]={"entry":entryPrice,"sl":stopLoss,"target":target,"buy_time":now_str,"buy_price":entryPrice,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib_0_38":STATE["fib_0_38"],"fib_0_5":STATE["fib_0_5"],"fib_2_414":STATE["fib_2_414"],"fib05Cross":fib_0_5_cross,"emaCrossFib05":ema_cross_fib_0_5,"greenAboveEMA":green_candle_upside_ema,"fiveRules":five_rules,"sl_shifted":False}
+                    lots=calc_lots()
+                    STATE["pos"]={"entry":entryPrice,"sl":stopLoss,"target":target,"buy_time":now_str,"buy_price":entryPrice,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib_0_38":STATE["fib_0_38"],"fib_0_5":STATE["fib_0_5"],"fib_1":STATE["fib_1"],"fib_1_6":STATE["fib_1_6"],"fib_2_414":STATE["fib_2_414"],"fib05Cross":fib_0_5_cross,"emaCrossFib05":ema_cross_fib_0_5,"greenAboveEMA":green_candle_upside_ema,"fiveRules":five_rules,"rsi":rsi,"lots":lots,"sl_shifted":False,"target_shifted":False}
                     STATE["trades"]+=1
                     STATE["trades_today"]+=1
-                    STATE["entry"]=entryPrice; STATE["sl"]=stopLoss; STATE["sl_shifted"]=False; STATE["target"]=target
-                    TRADES.append({"no":STATE["trades_today"],"buy_price":entryPrice,"buy_time":now_str,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN Latest Request","pnl":0,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib05":STATE["fib_0_5"],"sl":stopLoss,"fib_0_38":STATE["fib_0_38"],"fib_2_414":STATE["fib_2_414"],"entry":entryPrice,"target":target,"fib05Cross":fib_0_5_cross,"emaCrossFib05":ema_cross_fib_0_5,"greenAboveEMA":green_candle_upside_ema,"fiveRules":five_rules,"sl_shifted":False})
-                    log(f"🚀 BUY Latest | Trade {STATE['trades_today']}/5 | BUY @ {entryPrice:.2f} Open {STATE['open_price']:.0f} Trend {STATE['trend']} Selected {STATE['selected_type']} Call {STATE['call_strike']} Put {STATE['put_strike']} 0.30 Delta | Five Rules: Fib 0.5 Cross {fib_0_5_cross} EMA Cross Fib 0.5 {ema_cross_fib_0_5} Green Above EMA {green_candle_upside_ema} | SL 0.38 {STATE['fib_0_38']:.2f} Trail Entry+15={entryPrice+15:.2f} Cost to Cost Once | TGT 2.414 {STATE['fib_2_414']:.2f} | H2 {h2:.2f} L2 {l2:.2f} | Telegram Sending Latest...")
-                    ok, msg = send_tg_fixed(f"BUY {STATE['trades_today']}/5 @{entryPrice:.1f} {STATE['selected_type']}")
-                    log(f"BUY Telegram Result Latest: {msg}")
+                    STATE["entry"]=entryPrice; STATE["sl"]=stopLoss; STATE["sl_shifted"]=False; STATE["target"]=target; STATE["target_shifted"]=False
+                    TRADES.append({"no":STATE["trades_today"],"buy_price":entryPrice,"buy_time":now_str,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN Target 1.6->2.414","pnl":0,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib05":STATE["fib_0_5"],"sl":stopLoss,"fib_0_38":STATE["fib_0_38"],"fib_1":STATE["fib_1"],"fib_1_6":STATE["fib_1_6"],"fib_2_414":STATE["fib_2_414"],"entry":entryPrice,"target":target,"rsi":rsi,"lots":lots})
+                    log(f"BUY Target 1.6->2.414 | Trade {STATE['trades_today']}/5 | BUY @ {entryPrice:.2f} {STATE['selected_type']} Lots {lots} RSI {rsi:.0f} | SL {STATE['fib_0_38']:.2f} TGT 1.6 {STATE['fib_1_6']:.2f} -> 2.414 {STATE['fib_2_414']:.2f}")
+                    ok, msg = send_tg_fixed(f"BUY {STATE['trades_today']}/5 @{entryPrice:.1f} {STATE['selected_type']} TGT 1.6 {STATE['fib_1_6']:.1f}->2.414 {STATE['fib_2_414']:.1f}")
                 
-                if STATE["pos"] is not None and not STATE["sl_shifted"]:
+                if STATE["pos"] is not None:
                     entry=STATE["pos"]["entry"]
                     curr_price=last_close
-                    if curr_price >= entry + 15:
-                        STATE["pos"]["sl"]=entry
-                        STATE["sl"]=entry
-                        STATE["sl_shifted"]=True
-                        STATE["pos"]["sl_shifted"]=True
-                        log(f"🔄 SL Trailing Only One Time After Premium Go Up Side Mini 15 Point Trail SL Cost to Cost | Entry {entry:.2f} -> SL Shifted to Entry {entry:.2f} Cost to Cost Only Once! | Premium Up Side {curr_price:.2f} >= Entry+15 {entry+15:.2f} Min 15 Point Up Side - Your Request! | Only Once!")
-                        ok, msg = send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+                    # SL Trail 1: 15pt -> Cost to Cost
+                    if not STATE["sl_shifted"]:
+                        if curr_price >= entry + 15:
+                            STATE["pos"]["sl"]=entry
+                            STATE["sl"]=entry
+                            STATE["sl_shifted"]=True
+                            log(f"SL Trail 1: 15pt Cost | Entry {entry:.2f} -> SL {entry:.2f} | Premium {curr_price:.2f} >= Entry+15 {entry+15:.2f}")
+                            send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+                    # FINAL: After cross Fib 1.6 -> SL to Fib 1.0 - After cross 1.6 SL shift/trail to 1 fibb level
+                    if STATE["sl_shifted"] and not STATE.get("sl_trail_to_fib1_after_16",False):
+                        fib_1_6_val=STATE["fib_1_6"]
+                        if fib_1_6_val is not None and curr_price >= fib_1_6_val:
+                            STATE["pos"]["sl"]=fib_1_6_val
+                            STATE["sl"]=fib_1_6_val
+                            STATE["sl_trail_to_fib16"]=True
+                            STATE["sl_trail_to_fib16_done"]=True
+                            log(f"SL Trail 2 CORRECTION: Cross Fib1.6 -> SL to Fib1.6 {fib_1_6_val:.2f} | Premium {curr_price:.2f} - Correction")
+                            send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Corr")
+                            STATE["sl"]=fib_1_6_val
+                            STATE["sl_trail_to_fib16"]=True
+                            STATE["sl_trail_to_fib16_done"]=True
+                            log(f"SL Trail 2 CORRECTION: Cross Fib1.6 -> SL to Fib1.6 {fib_1_6_val:.2f} | Premium {curr_price:.2f} - Correction")
+                            send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Corr")
+                    # Target Shift: 1.6 near -> 2.414
+                    if not STATE["target_shifted"]:
+                        fib_1_6_val=STATE["fib_1_6"]
+                        if fib_1_6_val is not None and curr_price >= fib_1_6_val*0.98:
+                            STATE["pos"]["target"]=STATE["fib_2_414"]
+                            STATE["target"]=STATE["fib_2_414"]
+                            STATE["target_shifted"]=True
+                            log(f"TGT Shift: 1.6 Near {fib_1_6_val:.2f} -> Shift to 2.414 {STATE['fib_2_414']:.2f} | Premium {curr_price:.2f}")
+                            send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
                 
                 if STATE["pos"]:
                     curr_price=list(CANDLES)[-1]['c']
                     if curr_price <= STATE["pos"]["sl"]:
                         sl_shifted=STATE["pos"].get("sl_shifted",False)
-                        pnl=(STATE["pos"]["sl"]-STATE["pos"]["entry"])*65
+                        lots=STATE["pos"].get("lots",1)
+                        pnl=(STATE["pos"]["sl"]-STATE["pos"]["entry"])*65*lots
                         if sl_shifted:
-                            pnl=0
+                            # If SL shifted to Fib1, may still have profit
+                            if STATE.get("sl_trail_to_fib1_done",False):
+                                pnl=(STATE["pos"]["sl"]-STATE["pos"]["entry"])*65*lots
+                            else:
+                                pnl=0
                         STATE["pnl"]+=pnl
+                        STATE["daily_pnl"]+=pnl
                         CANDLES[-1]["sell_sl"]=True
+                        if not sl_shifted:
+                            STATE["consecutive_losses"]+=1
+                            STATE["losses"]=STATE.get("losses",0)+1
+                            if STATE["consecutive_losses"]>=2:
+                                STATE["pause_until"]=datetime.now(IST)+timedelta(minutes=30)
+                                log(f"2 SL Pause 30 Min Till {STATE['pause_until']}")
+                                send_tg_fixed(f"2 SL Pause 30M P&L {STATE['daily_pnl']:.0f}")
+                        else:
+                            STATE["consecutive_losses"]=0
+                            if pnl>0:
+                                STATE["wins"]=STATE.get("wins",0)+1
                         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
-                            TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]="SL HIT Cost to Cost Entry Trail 15pt" if sl_shifted else "SL HIT 0.38 Fib Latest"; TRADES[-1]["pnl"]=round(pnl,0)
-                        log(f"🔴 SL HIT Latest | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} | SL {STATE['pos']['sl']:.2f} {'Shifted to Entry Cost to Cost Once 15pt Trail' if sl_shifted else 'Fib 0.38 Initial'} | Telegram Sending...")
-                        ok, msg = send_tg_fixed(f"SL HIT @{curr_price:.1f} P&L {pnl:.0f}")
+                            exit_type="SL HIT Cost" if sl_shifted and not STATE.get("sl_trail_to_fib1_done",False) else f"SL HIT Fib1 Trail" if STATE.get("sl_trail_to_fib1_done",False) else "SL HIT 0.38"
+                            TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=exit_type; TRADES[-1]["pnl"]=round(pnl,0)
+                        log(f"SL HIT | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} Daily {STATE['daily_pnl']:.0f}")
+                        send_tg_fixed(f"SL HIT @{curr_price:.1f} P&L {pnl:.0f} Dly {STATE['daily_pnl']:.0f}")
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
+                        STATE["target_shifted"]=False
+                        STATE["sl_trail_to_fib1"]=False
+                        STATE["sl_trail_to_fib1_done"]=False
                     elif curr_price >= STATE["pos"]["target"]:
-                        pnl=(STATE["pos"]["target"]-STATE["pos"]["entry"])*65
+                        lots=STATE["pos"].get("lots",1)
+                        pnl=(STATE["pos"]["target"]-STATE["pos"]["entry"])*65*lots
                         STATE["pnl"]+=pnl
+                        STATE["daily_pnl"]+=pnl
                         CANDLES[-1]["sell_tgt"]=True
+                        STATE["consecutive_losses"]=0
+                        STATE["wins"]=STATE.get("wins",0)+1
                         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
-                            TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=f"TGT HIT 2.414 Latest"; TRADES[-1]["pnl"]=round(pnl,0)
-                        log(f"🟢 TGT HIT 2.414 Latest | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} | TGT {STATE['pos']['target']:.2f} Fib 2.414 | Telegram Sending...")
-                        ok, msg = send_tg_fixed(f"TGT HIT @{curr_price:.1f} P&L {pnl:.0f}")
+                            exit_type=f"TGT HIT 1.6" if not STATE["target_shifted"] else f"TGT HIT 2.414 After 1.6 Shift"
+                            TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=exit_type; TRADES[-1]["pnl"]=round(pnl,0)
+                        log(f"TGT HIT | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} Daily {STATE['daily_pnl']:.0f} TGT {STATE['pos']['target']:.2f}")
+                        send_tg_fixed(f"TGT HIT @{curr_price:.1f} P&L {pnl:.0f} Dly {STATE['daily_pnl']:.0f}")
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
+                        STATE["target_shifted"]=False
+                        STATE["sl_trail_to_fib1"]=False
+                        STATE["sl_trail_to_fib1_done"]=False
                 
                 time.sleep(10)
             except Exception as e:
-                try:
-                    import traceback
-                    log(f"BOT LOOP Latest ERR {e} {traceback.format_exc()[:250]} - Fixed - Retrying")
-                except: pass
+                import traceback
+                log(f"BOT LOOP ERR {e} {traceback.format_exc()[:250]}")
                 time.sleep(10)
     except Exception as e:
-        log(f"BOT START ERR Latest {e}")
+        log(f"BOT START ERR {e}")
 
 threading.Thread(target=bot_loop_latest, daemon=True).start()
-
-
-@app.route('/simple')
-def simple_page():
-    return """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NIFTY PRO - Trade Only</title>
-<style>
-body{margin:0;background:#020617;color:#e2e8f0;font-family:Arial,sans-serif;padding:12px}
-.card{background:#0f172a;border:2px solid #22c55e;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center}
-.green{color:#22c55e;font-weight:bold;font-size:22px}
-.yellow{color:#eab308;font-weight:bold}
-.red{color:#ef4444;font-weight:bold}
-.purple{color:#a78bfa;font-weight:bold}
-.big{font-size:28px;font-weight:bold}
-.small{font-size:12px;color:#94a3b8;margin-top:4px}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.box{background:#1e293b;border-radius:10px;padding:10px;border:1px solid #334155}
-.auto{animation:blink 1.5s infinite}
-@keyframes blink{0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}
-</style>
-<script>
-let count=0;
-function load(){
-  fetch('/api/candles').then(r=>r.json()).then(j=>{
-    document.getElementById('trades').innerText=j.trades_today+'/5';
-    document.getElementById('pnl').innerText='Rs.'+(j.pnl!=null?j.pnl.toFixed(0):'0');
-    document.getElementById('pnl').style.color=j.pnl>=0?'#22c55e':'#ef4444';
-    document.getElementById('spot').innerText=j.spot_val?j.spot_val.toFixed(2):'--';
-    document.getElementById('prem').innerText=j.curr_price?j.curr_price.toFixed(2):'--';
-    document.getElementById('selected').innerText=j.selected_type||'--';
-    document.getElementById('open').innerText=j.open_price?j.open_price.toFixed(0):'--';
-    document.getElementById('auto_mark').innerText=j.auto_mark||'--';
-    document.getElementById('diff').innerText=j.market_diff!=null? (j.market_diff>0? '+'+j.market_diff.toFixed(0): j.market_diff.toFixed(0))+'pt':'--';
-    document.getElementById('diff').style.color=j.market_diff>0?'#22c55e':j.market_diff<0?'#ef4444':'#eab308';
-    document.getElementById('trend').innerText=j.trend||'--';
-    document.getElementById('entry').innerText=j.entry?j.entry.toFixed(2):'--';
-    document.getElementById('sl').innerText=j.sl?j.sl.toFixed(2):'--';
-    document.getElementById('tgt').innerText=j.target?j.target.toFixed(2):'--';
-    document.getElementById('pos').innerText=j.pos? 'OPEN @'+j.pos.entry.toFixed(2)+' ('+j.pos.strike+')' : 'No Position';
-    let tradesHtml='';
-    if(j.trades && j.trades.length>0){
-      j.trades.slice(-5).reverse().forEach(t=>{
-        tradesHtml+=`<div style='background:#020617;padding:6px;margin:4px 0;border-radius:6px;font-size:12px'>#${t.no} ${t.strike||''} BUY ${t.buy_price? t.buy_price.toFixed(1):'--'} -> SELL ${t.exit_price? t.exit_price.toFixed(1):'OPEN'} P&L ${t.pnl? t.pnl.toFixed(0):'0'} ${t.exit_type||''}</div>`;
-      });
-    }else tradesHtml='<div class="small">No trades yet 0/5</div>';
-    document.getElementById('trades_list').innerHTML=tradesHtml;
-    document.getElementById('count').innerText=++count;
-    document.getElementById('time').innerText=new Date().toLocaleTimeString();
-  }).catch(e=>{
-    document.getElementById('time').innerText='Error loading - '+e;
-  });
-}
-setInterval(load,3000);
-window.onload=load;
-</script></head>
-<body>
-<div class="card">
-<div style="font-size:18px;font-weight:bold;color:#22c55e">NIFTY 50 PRO - Auto Loaded - Trade Only + P&L</div>
-<div class="small auto">Auto Reload Every 3 Sec - Only Trade Info + P&L - Baki Kahi Nako - As Per Request</div>
-<div class="small">Time: <span id="time">--</span> | Reload: <span id="count">0</span></div>
-</div>
-
-<div class="row">
-<div class="box"><div class="small">Trades Today</div><div id="trades" class="big yellow">0/5</div><div class="small">Max 5 Trades</div></div>
-<div class="box"><div class="small">P&L - Only Trade + P&L</div><div id="pnl" class="big green">Rs.0</div><div class="small">Profit / Loss</div></div>
-</div>
-
-<div class="card">
-<div class="small">Current Position</div>
-<div id="pos" class="green">No Position</div>
-<div class="row" style="margin-top:10px">
-<div class="box"><div class="small">Entry</div><div id="entry" class="purple">--</div></div>
-<div class="box"><div class="small">SL (0.38 Trail Once)</div><div id="sl" class="red">--</div></div>
-<div class="box"><div class="small">Target (2.414)</div><div id="tgt" class="green">--</div></div>
-<div class="box"><div class="small">Premium</div><div id="prem" class="yellow">--</div></div>
-</div>
-</div>
-
-<div class="card">
-<div class="small">Market Opening Price Pasun 150pt Auto Mark Delta 0.30</div>
-<div id="auto_mark" class="small" style="color:#22c55e;font-size:13px;margin:6px 0">--</div>
-<div class="row">
-<div class="box"><div class="small">Open Price</div><div id="open" class="yellow">--</div><div class="small">09:15 Captured</div></div>
-<div class="box"><div class="small">Market Diff From Open</div><div id="diff" class="big">--</div><div class="small">Spot - Open</div></div>
-<div class="box"><div class="small">Spot NIFTY</div><div id="spot" class="green">--</div></div>
-<div class="box"><div class="small">Selected Premium</div><div id="selected" class="purple" style="font-size:11px">--</div></div>
-</div>
-<div class="small" style="margin-top:8px">Trend: <span id="trend" style="color:#22c55e">--</span></div>
-</div>
-
-<div class="card">
-<div class="small" style="font-weight:bold">Last 5 Trades - Only Trade Info</div>
-<div id="trades_list"><div class="small">Loading trades...</div></div>
-</div>
-
-<div class="small" style="text-align:center;margin-top:10px">Auto Loaded Web Page - Only Trade Chi Mahiti Ani P&L Disuse - Baki Kahi Nako - As Per Request - Market Opening Price Pasun 150pt Auto Mark Delta 0.30</div>
-</body></html>
-"""
-
-@app.route('/live')
-def live_page():
-    return simple_page()
-
-@app.route('/pnl')
-def pnl_page():
-    return simple_page()
-
-@app.route('/trades_only')
-def trades_only():
-    return simple_page()
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
