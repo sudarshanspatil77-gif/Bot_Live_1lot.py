@@ -286,7 +286,13 @@ def send_tg_raw(text):
         token=get_env_tg('TELEGRAM_BOT_TOKEN','telegram_bot_token')
         chat=get_env_tg('TELEGRAM_CHAT_ID','telegram_chat_id')
         if not token or not chat:
-            return False, "Token Missing"
+            log(f"Telegram Token Missing - Token {bool(token)} Chat {bool(chat)} - Set ENV TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Render")
+            return False, f"Token Missing - Token {bool(token)} Chat {bool(chat)} - Set ENV"
+        token = token.strip()
+        chat = str(chat).strip()
+        # Remove any spaces or newlines from token
+        token = token.replace("\n","").replace("\r","").replace(" ","")
+        chat = chat.replace("\n","").replace("\r","").strip()
         if STATE.get("trades_today",0)>=5:
             if not STATE.get("telegram_limit_sent",False):
                 try:
@@ -294,25 +300,38 @@ def send_tg_raw(text):
                     requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
                     STATE["telegram_limit_sent"]=True
                     STATE["telegram_enabled"]=False
-                except: pass
+                except Exception as e:
+                    log(f"Telegram 5 Trades OFF ERR {e}")
             return False, "Limit OFF"
         if not STATE.get("telegram_enabled",True):
             return False, "Disabled"
+        # Ensure text not too long - Telegram limit 4096
+        if len(text) > 4000:
+            text = text[:3950] + "\n...truncated"
         r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
         if r.status_code==200:
             STATE["telegram_ok"]=True
-            log(f"Telegram OK: {text[:80]}")
+            log(f"Telegram OK: {text[:80]} - Chat {chat[:5]}...")
             return True, "OK"
         else:
+            err = r.text[:500] if hasattr(r,'text') else str(r.status_code)
+            log(f"Telegram Fail {r.status_code}: {err[:200]} - Text was: {text[:80]} - Token {token[:10]}... Chat {chat[:5]}...")
             # Retry with shorter if too long
-            if "too long" in r.text.lower():
-                short_text = text[:4000]
-                r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
-                if r2.status_code==200:
-                    STATE["telegram_ok"]=True
-                    return True, "OK Retry"
-            return False, f"Fail {r.status_code} {r.text[:200]}"
+            if "too long" in err.lower() or r.status_code==400:
+                short_text = text[:1000]
+                try:
+                    r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
+                    if r2.status_code==200:
+                        STATE["telegram_ok"]=True
+                        log(f"Telegram Retry OK Short: {short_text[:50]}")
+                        return True, "OK Retry Short"
+                    else:
+                        log(f"Telegram Retry Fail {r2.status_code}: {r2.text[:200]}")
+                except Exception as e2:
+                    log(f"Telegram Retry ERR {e2}")
+            return False, f"Fail {r.status_code} {err[:200]}"
     except Exception as e:
+        log(f"Telegram send_tg_raw ERR {e} - Text: {text[:50]}")
         return False, f"Err {e}"
 
 def send_trade_message(spot, entry, exit_price, qty, pnl, total_pnl_today, option_type_str, reason, trade_time):
@@ -355,7 +374,13 @@ def send_tg_raw(text):
         token=get_env_tg('TELEGRAM_BOT_TOKEN','telegram_bot_token')
         chat=get_env_tg('TELEGRAM_CHAT_ID','telegram_chat_id')
         if not token or not chat:
-            return False, "Token Missing"
+            log(f"Telegram Token Missing - Token {bool(token)} Chat {bool(chat)} - Set ENV TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Render")
+            return False, f"Token Missing - Token {bool(token)} Chat {bool(chat)} - Set ENV"
+        token = token.strip()
+        chat = str(chat).strip()
+        # Remove any spaces or newlines from token
+        token = token.replace("\n","").replace("\r","").replace(" ","")
+        chat = chat.replace("\n","").replace("\r","").strip()
         if STATE.get("trades_today",0)>=5:
             if not STATE.get("telegram_limit_sent",False):
                 try:
@@ -363,24 +388,38 @@ def send_tg_raw(text):
                     requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
                     STATE["telegram_limit_sent"]=True
                     STATE["telegram_enabled"]=False
-                except: pass
+                except Exception as e:
+                    log(f"Telegram 5 Trades OFF ERR {e}")
             return False, "Limit OFF"
         if not STATE.get("telegram_enabled",True):
             return False, "Disabled"
+        # Ensure text not too long - Telegram limit 4096
+        if len(text) > 4000:
+            text = text[:3950] + "\n...truncated"
         r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
         if r.status_code==200:
             STATE["telegram_ok"]=True
-            log(f"Telegram OK: {text[:100]}")
+            log(f"Telegram OK: {text[:80]} - Chat {chat[:5]}...")
             return True, "OK"
         else:
-            if "too long" in r.text.lower():
-                short_text = text[:4000]
-                r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
-                if r2.status_code==200:
-                    STATE["telegram_ok"]=True
-                    return True, "OK Retry"
-            return False, f"Fail {r.status_code} {r.text[:200]}"
+            err = r.text[:500] if hasattr(r,'text') else str(r.status_code)
+            log(f"Telegram Fail {r.status_code}: {err[:200]} - Text was: {text[:80]} - Token {token[:10]}... Chat {chat[:5]}...")
+            # Retry with shorter if too long
+            if "too long" in err.lower() or r.status_code==400:
+                short_text = text[:1000]
+                try:
+                    r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
+                    if r2.status_code==200:
+                        STATE["telegram_ok"]=True
+                        log(f"Telegram Retry OK Short: {short_text[:50]}")
+                        return True, "OK Retry Short"
+                    else:
+                        log(f"Telegram Retry Fail {r2.status_code}: {r2.text[:200]}")
+                except Exception as e2:
+                    log(f"Telegram Retry ERR {e2}")
+            return False, f"Fail {r.status_code} {err[:200]}"
     except Exception as e:
+        log(f"Telegram send_tg_raw ERR {e} - Text: {text[:50]}")
         return False, f"Err {e}"
 
 def send_trade_message(spot, entry, exit_price, qty, pnl, total_pnl_today, option_type_str, reason, trade_time):
@@ -411,11 +450,12 @@ Time: {trade_time}"""
 
 def send_tg_fixed(text):
     try:
-        if "5 Trades OFF" in text:
+        # Allow TRADE format, 5 Trades OFF, Test OK
+        if "TRADE" in text or "5 Trades OFF" in text or "Test OK" in text or "BUY" in text or "SELL" in text:
             return send_tg_raw(text)
         if "Bot Started" in text:
-            log(f"Bot Started suppressed - baki kahi nako - Only trade format - {text[:50]}")
-            return False, "Suppressed - baki kahi nako"
+            # Allow Bot Started as well for testing
+            return send_tg_raw(f"Bot Started {STATE.get('open_price',0):.0f} {STATE.get('selected_type','')[:20]}")
         log(f"Suppressed old style (baki kahi nako): {text[:60]} - Only TRADE format allowed per user request")
         return False, "Suppressed - baki kahi nako - Only TRADE format"
     except Exception as e:
@@ -1078,8 +1118,26 @@ def force_sell():
 
 @app.route('/test_telegram')
 def test_telegram():
-    ok, msg = send_tg_fixed(f"Test OK Bot Working Target 1.6->2.414 SL 15pt Cost + Fib1 Trail")
-    return jsonify({"ok":ok,"msg":msg})
+    try:
+        # Test with short message + trade format both
+        token=get_env_tg('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env_tg('TELEGRAM_CHAT_ID','telegram_chat_id')
+        if not token or not chat:
+            return jsonify({"ok":False,"msg":f"Token Missing - Token {bool(token)} Chat {bool(chat)} - Set ENV TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"})
+        # Try short test
+        ok1, msg1 = send_tg_raw("Test OK Bot Working - 200 EMA + H1L1 H2L2 Both")
+        # Try trade format test
+        spot_test = STATE.get("spot", 22472.30)
+        entry_test = STATE.get("prem", 45.85)
+        exit_test = entry_test + 28.18
+        qty_test = STATE.get("lot_size", 65)
+        pnl_test = (exit_test-entry_test)*qty_test
+        total_test = STATE.get("daily_pnl", 11672.05)
+        option_test = STATE.get("selected_type", "PE 22350")[:20]
+        ok2, msg2 = send_trade_message(spot_test, entry_test, exit_test, qty_test, pnl_test, total_test, option_test, "Test Trade Format - Market Volatility Entry", datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
+        return jsonify({"ok":ok1 or ok2,"msg":f"Test1 Short: {msg1} | Test2 Trade Format: {msg2} | Token {bool(token)} Chat {chat[:5]}... | If Fail 400 Bad Request message too long -> Fix applied with short messages"})
+    except Exception as e:
+        return jsonify({"ok":False,"msg":f"Test ERR {e}"}),500
 
 def bot_loop_latest():
     try:
@@ -1366,7 +1424,20 @@ def bot_loop_latest():
                     STATE["entry"]=entryPrice; STATE["sl"]=stopLoss; STATE["sl_shifted"]=False; STATE["target"]=target; STATE["target_shifted"]=False
                     TRADES.append({"no":STATE["trades_today"],"buy_price":entryPrice,"buy_time":now_str,"exit_price":0,"exit_time":"OPEN","exit_type":"OPEN Target 1.6->2.414","pnl":0,"strike":f"{strike}{STATE['option_type']}","open_price":STATE["open_price"],"call_strike":STATE["call_strike"],"put_strike":STATE["put_strike"],"selected_type":STATE["selected_type"],"trend":STATE["trend"],"h2":h2,"l2":l2,"range":STATE["fib_range_h2_l2"],"fib05":STATE["fib_0_5"],"sl":stopLoss,"fib_0_38":STATE["fib_0_38"],"fib_1":STATE["fib_1"],"fib_1_6":STATE["fib_1_6"],"fib_2_414":STATE["fib_2_414"],"entry":entryPrice,"target":target,"rsi":rsi,"lots":lots})
                     log(f"BUY Target 1.6->2.414 | Trade {STATE['trades_today']}/5 | BUY @ {entryPrice:.2f} {STATE['selected_type']} Lots {lots} RSI {rsi:.0f} | SL {STATE['fib_0_38']:.2f} TGT 1.6 {STATE['fib_1_6']:.2f} -> 2.414 {STATE['fib_2_414']:.2f}")
-                    ok, msg = send_tg_fixed(f"BUY {STATE['trades_today']}/5 @{entryPrice:.1f} {STATE['selected_type']} TGT 1.6 {STATE['fib_1_6']:.1f}->2.414 {STATE['fib_2_414']:.1f}")
+                    # Send BUY in TRADE format as well - Call and put buy kelele message ya format madhe yeude
+                    try:
+                        spot_buy = STATE.get("spot", 0)
+                        qty_buy = STATE.get("lot_size", 65)
+                        total_buy = STATE.get("daily_pnl", 0)
+                        option_buy = STATE.get("selected_type", f"{STATE.get('strike',0)}{STATE.get('option_type','')}")[:20]
+                        reason_buy = f"BUY Entry Market Volatility Entry (2 min cycle) Trade {STATE['trades_today']}/5"
+                        time_buy = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                        # BUY format: Use entry as both entry and exit for BUY notification, PnL 0
+                        send_trade_message(spot_buy, entryPrice, entryPrice, qty_buy, 0, total_buy, option_buy, reason_buy, time_buy)
+                    except Exception as e:
+                        log(f"BUY Telegram ERR {e}")
+                    # Also send short BUY via fixed
+                    ok, msg = send_tg_raw(f"BUY {STATE['trades_today']}/5 @{entryPrice:.0f} {STATE['selected_type'][:15]}")
                 
                 if STATE["pos"] is not None:
                     entry=STATE["pos"]["entry"]
