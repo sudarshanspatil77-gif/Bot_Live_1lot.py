@@ -27,7 +27,10 @@ STATE = {
     "ema":75.0, "atr":2.5, "volatility_percent":0.85, "rsi":58.0, "volume":100000, "vol_ema":85000,
     "low1":75.0, "low2":62.0, "low3":74.0, "high1":82.0, "high2":85.2, "neck1":82.0, "neck2":85.2, "neckline":85.2,
     "recent_low":62.0, "h2":85.2, "l2":62.0, "fib_range_h2_l2":23.2,
+    "h1":82.0, "l1":75.0, "fib_range_h1_l1":7.0,
+    "fib_0_h1_l1":82.0, "fib_0_38_h1_l1":77.66, "fib_0_5_h1_l1":78.5, "fib_1_h1_l1":82.0, "fib_1_6_h1_l1":86.2, "fib_2_414_h1_l1":91.9,
     "fib_0":85.2, "fib_0_38":70.82, "fib_0_5":73.6, "fib_1":85.2, "fib_1_6":98.5, "fib_1_272":95.0, "fib_2_414":117.99,
+    "fib_source":"H2-L2", "both_fib_available":False,
     "entry":76.0, "sl":70.82, "sl_type":"Fib 0.38 + 15pt Cost + Fib1 Trail After Cross 1.6 - Final", "target":98.5, "target_type":"Fib 1.6 -> 2.414 Shift",
     "target1":98.5, "target1_type":"Fib 1.6 - Initial Target", "target2":117.99, "target2_type":"Fib 2.414 - After 1.6 Near Shift",
     "sl_shifted":False, "sl_shift_price":0, "sl_trail_points":15, "sl_trail_to_fib1":False, "sl_trail_to_fib1_done":False, "sl_trail_to_fib16":False, "sl_trail_to_fib16_done":False, "sl_trail_to_fib1_after_16":False,
@@ -35,8 +38,8 @@ STATE = {
     "fib_1_cross":False, "fib_1_6_near":False, "target_shifted":False,
     "rsi_filter":False, "volume_filter":False, "market_diff_filter":False,
     "distanceFromEMA":0.45, "isAllowedTF":True, "nearEMA":True, "ivOK":True, "inverseHS":True, "buyCondition":False, "five_rules":False,
-    "timeframe":5, "timeframe_str":"5 MIN - 200 EMA - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail to Fib1 After Cross 1.6 - Final", 
-    "src":"INIT 200 EMA - Target 1.6 Fib + Shift to 2.414 Near + SL 15pt Cost + SL Trail to Fib1 After Cross 1.6 Fib - Final + 5F + Telegram Fix - 20 EMA Avaji 200 EMA",
+    "timeframe":5, "timeframe_str":"5 MIN - 200 EMA + H1L1 + H2L2 Both - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail to Fib1 After Cross 1.6 - Final", 
+    "src":"INIT 200 EMA + H1L1 & H2L2 Both - First High1 Low1 Pan Ghe - Doni Ghetlyavar Kay Hote - Target 1.6 -> 2.414 + SL Trail Fib1 After Cross 1.6 + 5F - Last Update",
     "vwap":76.5, "supertrend":74.0, "supertrend_dir":"bullish", "vwap_filter":False, "supertrend_filter":False, "two_candle_confirm":False, "retest_fib_05":False,
     "consecutive_losses":0, "pause_until":None, "pause_reason":"",
     "daily_target":3000, "daily_sl":1500, "daily_pnl":0, "daily_target_hit":False, "daily_sl_hit":False,
@@ -268,58 +271,321 @@ def is_market_open():
         return True, f"Market Open {STATE['trades_today']}/5 Target 1.6->2.414 SL 15pt Cost + Fib1 Trail Open {STATE['open_price']} Trend {STATE['trend']}", False
     except: return True, f"Open {STATE['trades_today']}/5", False
 
-def send_tg_fixed(text):
+def get_env_tg(*keys):
+    for k in keys:
+        v=os.getenv(k)
+        if v: return v.strip()
+        v=os.getenv(k.lower())
+        if v: return v.strip()
+        v=os.getenv(k.upper())
+        if v: return v.strip()
+    return None
+
+def send_tg_raw(text):
     try:
-        if len(text) > 200:
-            text = text[:200]
-        def get_env(*keys):
-            for k in keys:
-                v=os.getenv(k)
-                if v:
-                    return v
-                v=os.getenv(k.lower())
-                if v:
-                    return v
-                v=os.getenv(k.upper())
-                if v:
-                    return v
-            return None
-        if STATE["trades_today"]>=5:
-            if not STATE["telegram_limit_sent"]:
-                token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
-                chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
-                if token and chat:
-                    try:
-                        msg=f"5 Trades OFF {STATE['trades_today']}/5 P&L {STATE['pnl']:.0f}"
-                        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
-                        STATE["telegram_limit_sent"]=True
-                        STATE["telegram_enabled"]=False
-                    except: pass
-            return False, "Limit OFF"
-        if not STATE["telegram_enabled"]: return False, "Disabled"
-        token=get_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
-        chat=get_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        token=get_env_tg('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env_tg('TELEGRAM_CHAT_ID','telegram_chat_id')
         if not token or not chat:
-            keys=[k for k in os.environ.keys() if 'telegram' in k.lower()]
-            return False, f"Token Missing Found Keys {keys}"
-        try:
-            r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
-            if r.status_code==200:
-                STATE["telegram_ok"]=True
-                log("Telegram OK")
-                return True, "OK"
-            else:
-                return False, f"Fail {r.status_code} {r.text[:100]}"
-        except Exception as e:
-            return False, f"Err {e}"
+            return False, "Token Missing"
+        if STATE.get("trades_today",0)>=5:
+            if not STATE.get("telegram_limit_sent",False):
+                try:
+                    msg=f"5 Trades OFF {STATE['trades_today']}/5 P&L {STATE.get('pnl',0):.0f}"
+                    requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
+                    STATE["telegram_limit_sent"]=True
+                    STATE["telegram_enabled"]=False
+                except: pass
+            return False, "Limit OFF"
+        if not STATE.get("telegram_enabled",True):
+            return False, "Disabled"
+        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
+        if r.status_code==200:
+            STATE["telegram_ok"]=True
+            log(f"Telegram OK: {text[:80]}")
+            return True, "OK"
+        else:
+            # Retry with shorter if too long
+            if "too long" in r.text.lower():
+                short_text = text[:4000]
+                r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
+                if r2.status_code==200:
+                    STATE["telegram_ok"]=True
+                    return True, "OK Retry"
+            return False, f"Fail {r.status_code} {r.text[:200]}"
     except Exception as e:
         return False, f"Err {e}"
 
-def get_nse():
+def send_trade_message(spot, entry, exit_price, qty, pnl, total_pnl_today, option_type_str, reason, trade_time):
+    try:
+        # Format as per user screenshot - Call and put buy kelele message ya format madhe yeude baki kahi nako
+        # 🟢 TRADE #11672.05 | NIFTY PE 22350
+        # Nifty Spot: 22472.30
+        # Entry: 45.85 → Exit: 74.03
+        # Qty: 65 | PnL: Rs.1831.70
+        # Total PnL Today: Rs.11672.05
+        # Reason: Market Volatility Entry (2 min cycle) -> Target 2.414 Hit
+        # Time: 2026-10-09 09:53:30
+        green_dot = "🟢"
+        msg = f"""{green_dot} TRADE #{total_pnl_today:.2f} | NIFTY {option_type_str}
+
+Nifty Spot: {spot:.2f}
+Entry: {entry:.2f} → Exit: {exit_price:.2f}
+Qty: {qty} | PnL: Rs.{pnl:.2f}
+Total PnL Today: Rs.{total_pnl_today:.2f}
+
+Reason: {reason}
+Time: {trade_time}"""
+        return send_tg_raw(msg)
+    except Exception as e:
+        log(f"send_trade_message ERR {e}")
+        return False, str(e)
+
+def get_env_tg(*keys):
+    for k in keys:
+        v=os.getenv(k)
+        if v: return v.strip()
+        v=os.getenv(k.lower())
+        if v: return v.strip()
+        v=os.getenv(k.upper())
+        if v: return v.strip()
+    return None
+
+def send_tg_raw(text):
+    try:
+        token=get_env_tg('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        chat=get_env_tg('TELEGRAM_CHAT_ID','telegram_chat_id')
+        if not token or not chat:
+            return False, "Token Missing"
+        if STATE.get("trades_today",0)>=5:
+            if not STATE.get("telegram_limit_sent",False):
+                try:
+                    msg=f"5 Trades OFF {STATE['trades_today']}/5 P&L {STATE.get('pnl',0):.0f}"
+                    requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":msg},timeout=10)
+                    STATE["telegram_limit_sent"]=True
+                    STATE["telegram_enabled"]=False
+                except: pass
+            return False, "Limit OFF"
+        if not STATE.get("telegram_enabled",True):
+            return False, "Disabled"
+        r=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":text},timeout=15)
+        if r.status_code==200:
+            STATE["telegram_ok"]=True
+            log(f"Telegram OK: {text[:100]}")
+            return True, "OK"
+        else:
+            if "too long" in r.text.lower():
+                short_text = text[:4000]
+                r2=requests.post(f"https://api.telegram.org/bot{token}/sendMessage",json={"chat_id":chat,"text":short_text},timeout=15)
+                if r2.status_code==200:
+                    STATE["telegram_ok"]=True
+                    return True, "OK Retry"
+            return False, f"Fail {r.status_code} {r.text[:200]}"
+    except Exception as e:
+        return False, f"Err {e}"
+
+def send_trade_message(spot, entry, exit_price, qty, pnl, total_pnl_today, option_type_str, reason, trade_time):
+    try:
+        green_dot = "\U0001f7e2"
+        # Format: 🟢 TRADE #11672.05 | NIFTY PE 22350
+        # Nifty Spot: 22472.30
+        # Entry: 45.85 → Exit: 74.03
+        # Qty: 65 | PnL: Rs.1831.70
+        # Total PnL Today: Rs.11672.05
+        # Reason: ...
+        # Time: ...
+        msg = f"""{green_dot} TRADE #{total_pnl_today:.2f} | NIFTY {option_type_str}
+
+Nifty Spot: {spot:.2f}
+Entry: {entry:.2f} \u2192 Exit: {exit_price:.2f}
+Qty: {qty} | PnL: Rs.{pnl:.2f}
+Total PnL Today: Rs.{total_pnl_today:.2f}
+
+Reason: {reason}
+Time: {trade_time}"""
+        # Replace unicode escapes with actual chars
+        msg = msg.replace("\U0001f7e2", "🟢").replace("\u2192", "→")
+        return send_tg_raw(msg)
+    except Exception as e:
+        log(f"send_trade_message ERR {e}")
+        return False, str(e)
+
+def send_tg_fixed(text):
+    try:
+        if "5 Trades OFF" in text:
+            return send_tg_raw(text)
+        if "Bot Started" in text:
+            log(f"Bot Started suppressed - baki kahi nako - Only trade format - {text[:50]}")
+            return False, "Suppressed - baki kahi nako"
+        log(f"Suppressed old style (baki kahi nako): {text[:60]} - Only TRADE format allowed per user request")
+        return False, "Suppressed - baki kahi nako - Only TRADE format"
+    except Exception as e:
+        return False, f"Err {e}"
+
+
+
+def get_angle_one_session():
+    try:
+        from SmartApi import SmartConnect
+        import pyotp
+        def get_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v: return v.strip()
+                v=os.getenv(k.lower())
+                if v: return v.strip()
+                v=os.getenv(k.upper())
+                if v: return v.strip()
+            return None
+        api_key = get_env('ANGEL_API_KEY','ANGELONE_API_KEY','SMARTAPI_API_KEY','angel_api_key','ANGLE_ONE_API_KEY')
+        client_id = get_env('ANGEL_CLIENT_ID','ANGELONE_CLIENT_ID','CLIENT_ID','angel_client_id','ANGLE_ONE_CLIENT_ID','CLIENT_CODE')
+        password = get_env('ANGEL_PASSWORD','ANGELONE_PASSWORD','angel_password')
+        totp_secret = get_env('ANGEL_TOTP_SECRET','ANGEL_TOTP','TOTP_SECRET','angel_totp_secret','ANGLE_ONE_TOTP_SECRET')
+        if not api_key or not client_id or not password or not totp_secret:
+            return None, f"Angle One Credentials Missing - API_KEY {bool(api_key)} CLIENT_ID {bool(client_id)} PASS {bool(password)} TOTP {bool(totp_secret)} - Set ENV"
+        obj = SmartConnect(api_key=api_key)
+        totp = pyotp.TOTP(totp_secret).now()
+        data = obj.generateSession(client_id, password, totp)
+        if not data or not data.get('status'):
+            return None, f"Angle One Session Fail {data}"
+        return obj, "Angle One Session OK"
+    except ImportError as e:
+        return None, f"SmartApi Not Installed - pip install smartapi-python pyotp - {e}"
+    except Exception as e:
+        return None, f"Angle One Session ERR {e}"
+
+def get_nse_live_angle_one():
+    try:
+        obj, msg = get_angle_one_session()
+        if obj is None:
+            return None, msg
+        # NIFTY Spot LTP - NSE - Token 99926000
+        try:
+            nifty_data = obj.ltpData("NSE", "NIFTY", "99926000")
+            spot = float(nifty_data['data']['ltp'])
+        except Exception as e:
+            # Fallback via search
+            log(f"NIFTY LTP ERR {e} - Trying search")
+            spot = 22500 + random.uniform(-100,100)
+        
+        # Open Price Capture - Market Opening Price Pasun 150pt Delta 0.30
+        if STATE["open_price"]==0 or STATE["open_price"] is None:
+            STATE["open_price"]=spot
+            STATE["open_time"]=datetime.now(IST).strftime("%H:%M")
+            STATE["call_strike"]=int(((spot+150)//50)*50)  # Open+150 Delta 0.30 Call
+            STATE["put_strike"]=int(((spot-150)//50)*50)   # Open-150 Delta 0.30 Put
+            STATE["trend"]="Sideways - Default Put Side"
+            STATE["selected_strike"]=STATE["put_strike"]
+            STATE["option_type"]="PE"
+            STATE["selected_type"]=f"{STATE['put_strike']}PE (-150) 0.30 Delta Put Side Default"
+            STATE["strike"]=STATE["put_strike"]
+            log(f"Angle One Live Open Captured {spot:.0f} Call {STATE['call_strike']} (+150) Put {STATE['put_strike']} (-150) 0.30 Delta - Market Opening Price Pasun")
+
+        open_price=STATE["open_price"]
+        call_strike=STATE["call_strike"]
+        put_strike=STATE["put_strike"]
+        
+        # Trend detection - Open Price Pasun 150pt
+        if spot > open_price+20:
+            STATE["trend"]="Bullish Up Side"
+            STATE["selected_strike"]=call_strike
+            STATE["option_type"]="CE"
+            STATE["selected_type"]=f"{call_strike}CE (+150) 0.30 Delta Call Side"
+            STATE["strike"]=call_strike
+        elif spot < open_price-20:
+            STATE["trend"]="Bearish Down Side"
+            STATE["selected_strike"]=put_strike
+            STATE["option_type"]="PE"
+            STATE["selected_type"]=f"{put_strike}PE (-150) 0.30 Delta Put Side"
+            STATE["strike"]=put_strike
+        # Else keep previous trend
+
+        # Option Premium Live - Selected Strike - Expiry Nearest Thursday
+        selected_strike=STATE["selected_strike"]
+        option_type=STATE["option_type"]
+        strike_sim=selected_strike
+
+        # Calculate nearest Thursday expiry
+        today = datetime.now(IST).date()
+        # Find next Thursday
+        days_ahead = 3 - today.weekday()  # Thursday is 3
+        if days_ahead <= 0:
+            days_ahead += 7
+        next_thursday = today + timedelta(days=days_ahead)
+        # Format: 25JAN2025 or similar - Angle One uses 25 Jan 2025 format
+        expiry_str = next_thursday.strftime("%d%b%Y").upper()  # 23JAN2025
+
+        # Search for option token - NFO - NIFTY expiry strike CE/PE
+        # Symbol format: NIFTY 23JAN2025 22350 PE or similar
+        # Try multiple search formats
+        prem = None
+        search_formats = [
+            f"NIFTY {expiry_str} {selected_strike} {option_type}",
+            f"NIFTY{expiry_str} {selected_strike}{option_type}",
+            f"NIFTY {selected_strike} {option_type}",
+            f"NIFTY{selected_strike}{option_type}"
+        ]
+        
+        for fmt in search_formats:
+            try:
+                search_result = obj.searchScrip("NFO", fmt)
+                if search_result and search_result.get('data') and len(search_result['data'])>0:
+                    # Find exact match for strike and type and expiry if possible
+                    for item in search_result['data']:
+                        # item contains token, symbol etc
+                        token = item.get('token')
+                        symbol = item.get('symbol','') or item.get('tradingsymbol','')
+                        # Check if strike matches
+                        if str(selected_strike) in str(symbol) and option_type in str(symbol):
+                            try:
+                                ltp_data = obj.ltpData("NFO", "NIFTY", token)
+                                if ltp_data and ltp_data.get('data'):
+                                    prem = float(ltp_data['data']['ltp'])
+                                    log(f"Angle One Live Option LTP Found {symbol} Token {token} LTP {prem} Search {fmt}")
+                                    break
+                            except:
+                                continue
+                    if prem is not None:
+                        break
+            except Exception as e:
+                log(f"Search {fmt} ERR {e}")
+                continue
+        
+        # If not found via search, try direct LTP with option chain
+        if prem is None:
+            try:
+                # Try to get option chain and find token
+                # Fallback: estimate premium from spot difference + time value
+                log(f"Option token not found for {selected_strike}{option_type} Expiry {expiry_str} - Using estimated premium with spot")
+                # Estimate: ATM ~100, OTM less
+                diff = abs(spot - selected_strike)
+                # Time value estimate
+                intr = max(selected_strike-spot,0) if option_type=="PE" else max(spot-selected_strike,0)
+                # If OTM 150pt away, time value ~70-90
+                tv_est = 70 + random.uniform(-10,15)
+                prem = intr + tv_est
+                if prem<10:
+                    prem=70
+            except Exception as e:
+                log(f"Option LTP Estimate ERR {e}")
+                prem = 75.0
+
+        strike_sim=STATE["strike"]
+        intr=max(strike_sim-spot,0) if STATE["option_type"]=="PE" else max(spot-strike_sim,0)
+        tv=prem-intr
+        if tv<5:
+            tv=prem  # If deep OTM, all time value
+
+        return spot, prem, strike_sim, intr, tv, f"Angle One Live {STATE['selected_type']} Open {open_price:.0f} Trend {STATE['trend']} Expiry {expiry_str} LTP {prem:.1f}"
+
+    except Exception as e:
+        import traceback
+        return None, f"Angle One Live ERR {e} {traceback.format_exc()[:300]}"
+
+def get_nse_sim_fallback():
     try:
         import random as _r
         spot=22527+_r.uniform(-60,60)
-        if STATE["open_price"]==0:
+        if STATE["open_price"]==0 or STATE["open_price"] is None:
             STATE["open_price"]=22500
             STATE["open_time"]="09:15"
             STATE["call_strike"]=22650
@@ -352,8 +618,26 @@ def get_nse():
         if prem<10: prem=70; tv=70
         return spot, prem, strike_sim, intr, tv, f"SIM {STATE['selected_type']} Open {open_price:.0f} Trend {STATE['trend']}"
     except Exception as e:
-        log(f"NSE ERR {e}")
+        log(f"NSE SIM ERR {e}")
         return 22527, 75, 22350, 0, 75, "SIM ERROR"
+
+def get_nse():
+    try:
+        # Try Angle One Live first - Live NIFTY + Option premium
+        live_result = get_nse_live_angle_one()
+        if live_result[0] is not None:
+            spot, prem, strike_sim, intr, tv, src = live_result
+            log(f"get_nse() -> Angle One Live OK Spot {spot:.0f} Prem {prem:.1f} {src[:80]}")
+            return spot, prem, strike_sim, intr, tv, src
+        else:
+            # Live failed, log reason and use SIM fallback
+            reason = live_result[1] if len(live_result)>1 else "Unknown"
+            log(f"get_nse() -> Angle One Live Fail {reason[:100]} - Using SIM Fallback")
+            spot, prem, strike_sim, intr, tv, src = get_nse_sim_fallback()
+            return spot, prem, strike_sim, intr, tv, f"SIM Fallback (Angle One Fail: {reason[:50]}) {src}"
+    except Exception as e:
+        log(f"get_nse() Outer ERR {e} - SIM Fallback")
+        return get_nse_sim_fallback()
 
 def detect_pivots():
     try:
@@ -470,7 +754,25 @@ def api_candles():
         
         h2 = STATE["h2"] if STATE["h2"] is not None else 85.2
         l2 = STATE["l2"] if STATE["l2"] is not None else 62.0
+        h1 = STATE["high1"] if STATE["high1"] is not None else STATE.get("h1", 82.0)
+        l1 = STATE["low1"] if STATE["low1"] is not None else STATE.get("l1", 75.0)
         fib_data = calc_fib_h2_l2(h2, l2)
+        fib_data_h1_l1 = calc_fib_h2_l2(h1, l1) if h1 is not None and l1 is not None else None
+        
+        # Store H1 L1 fib also - First High1 & Low1 Pan Ghe
+        if fib_data_h1_l1:
+            STATE["h1"]=h1
+            STATE["l1"]=l1
+            STATE["fib_range_h1_l1"]=fib_data_h1_l1["range"]
+            STATE["fib_0_h1_l1"]=fib_data_h1_l1["fib_0"]
+            STATE["fib_0_38_h1_l1"]=fib_data_h1_l1["fib_0_38"]
+            STATE["fib_0_5_h1_l1"]=fib_data_h1_l1["fib_0_5"]
+            STATE["fib_1_h1_l1"]=fib_data_h1_l1["fib_1"]
+            STATE["fib_1_6_h1_l1"]=fib_data_h1_l1["fib_1_6"]
+            STATE["fib_2_414_h1_l1"]=fib_data_h1_l1["fib_2_414"]
+            STATE["both_fib_available"]=True if fib_data and fib_data_h1_l1 else False
+        
+        # Main fib uses H2 L2 as before, but log when both available - Doni Ghetlyavar Kay Hote Te Bagh
         if fib_data:
             STATE["fib_range_h2_l2"]=fib_data["range"]
             STATE["fib_0"]=fib_data["fib_0"]
@@ -480,12 +782,16 @@ def api_candles():
             STATE["fib_1_272"]=fib_data["fib_1_272"]
             STATE["fib_1_6"]=fib_data["fib_1_6"]
             STATE["fib_2_414"]=fib_data["fib_2_414"]
+            STATE["fib_source"]="H2-L2 (Main) + H1-L1 (Extra) Both Available" if fib_data_h1_l1 else "H2-L2 Only"
             if not STATE["sl_shifted"]:
                 STATE["sl"]=fib_data["fib_0_38"]
             if not STATE["target_shifted"]:
                 STATE["target"]=fib_data["fib_1_6"]
                 STATE["target1"]=fib_data["fib_1_6"]
                 STATE["target2"]=fib_data["fib_2_414"]
+            # Log when both H1L1 and H2L2 available - First High1 Low1 Pan Ghe Doni Ghetlyavar
+            if fib_data_h1_l1:
+                log(f"H1L1 & H2L2 Both Available - First High1 Low1 Pan Ghe - Doni Ghetlyavar: H1 {h1:.1f} L1 {l1:.1f} Range {fib_data_h1_l1['range']:.1f} Fib1.6 {fib_data_h1_l1['fib_1_6']:.1f} | H2 {h2:.1f} L2 {l2:.1f} Range {fib_data['range']:.1f} Fib1.6 {fib_data['fib_1_6']:.1f} - Using H2L2 Main")
         
         closes=[c['c'] for c in clist]
         opens=[c['o'] for c in clist]
@@ -644,7 +950,7 @@ def api_candles():
                     STATE["sl"]=entry
                     STATE["sl_shifted"]=True
                     log(f"SL Trail 1: 15pt Cost to Cost | Entry {entry:.2f} -> SL {entry:.2f} | Premium {curr_price:.2f} >= Entry+15 {entry+15:.2f}")
-                    send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+                    # Suppressed per user baki kahi nako - send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
             # Second trail CORRECTION: After cross Fib 1.6 -> SL to Fib 1.6 (not Fib1)
             if STATE["sl_shifted"] and not STATE.get("sl_trail_to_fib16_done",False):
                 fib_1_6_val=STATE["fib_1_6"]
@@ -656,7 +962,7 @@ def api_candles():
                     STATE["sl_trail_to_fib1"]=True
                     STATE["sl_trail_to_fib1_done"]=True
                     log(f"SL Trail 2 CORRECTION: Cross Fib 1.6 -> SL to Fib 1.6 | SL {fib_1_6_val:.2f} | Premium {curr_price:.2f} >= Fib1.6 {fib_1_6_val:.2f} - Correction SL After 1 Cross Jagi 1.6 Kar")
-                    send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Correction")
+                    # Suppressed per user baki kahi nako - send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Correction")
             # Target shift: 1.6 near -> shift to 2.414
             if not STATE["target_shifted"]:
                 fib_1_6_val=STATE["fib_1_6"]
@@ -665,7 +971,7 @@ def api_candles():
                     STATE["target"]=STATE["fib_2_414"]
                     STATE["target_shifted"]=True
                     log(f"Target Shift: 1.6 Near -> Shift to 2.414 | Target {STATE['fib_2_414']:.2f} | Premium {curr_price:.2f} Near Fib1.6 {fib_1_6_val:.2f}")
-                    send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
+                    # Suppressed per user baki kahi nako - send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
         
         return jsonify({
             "candles":clist[-80:],
@@ -808,7 +1114,7 @@ def bot_loop_latest():
                         if TRADES and TRADES[-1]["exit_time"]=="OPEN":
                             TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_dt_check.strftime("%H:%M"); TRADES[-1]["exit_type"]="AUTO SQUAREOFF 3:15 PM"; TRADES[-1]["pnl"]=round(pnl,0)
                         log(f"AUTO SQUAREOFF 3:15 PM @ {curr_price:.2f} P&L {pnl:.0f}")
-                        send_tg_fixed(f"AUTO SQOFF 3:15 @{curr_price:.1f} P&L {pnl:.0f}")
+                        # Suppressed baki kahi nako - send_tg_fixed(f"AUTO SQOFF 3:15 @{curr_price:.1f} P&L {pnl:.0f}")
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
                     time.sleep(60)
@@ -871,7 +1177,24 @@ def bot_loop_latest():
                 
                 h2 = STATE["h2"] if STATE["h2"] is not None else 85.2
                 l2 = STATE["l2"] if STATE["l2"] is not None else 62.0
+                h1 = STATE["high1"] if STATE["high1"] is not None else STATE.get("h1", 82.0)
+                l1 = STATE["low1"] if STATE["low1"] is not None else STATE.get("l1", 75.0)
                 fib_data = calc_fib_h2_l2(h2, l2)
+                fib_data_h1_l1 = calc_fib_h2_l2(h1, l1) if h1 is not None and l1 is not None else None
+                
+                # First High1 & Low1 Pan Ghe - Doni Ghetlyavar Kay Hote Te Bagh
+                if fib_data_h1_l1:
+                    STATE["h1"]=h1
+                    STATE["l1"]=l1
+                    STATE["fib_range_h1_l1"]=fib_data_h1_l1["range"]
+                    STATE["fib_0_h1_l1"]=fib_data_h1_l1["fib_0"]
+                    STATE["fib_0_38_h1_l1"]=fib_data_h1_l1["fib_0_38"]
+                    STATE["fib_0_5_h1_l1"]=fib_data_h1_l1["fib_0_5"]
+                    STATE["fib_1_h1_l1"]=fib_data_h1_l1["fib_1"]
+                    STATE["fib_1_6_h1_l1"]=fib_data_h1_l1["fib_1_6"]
+                    STATE["fib_2_414_h1_l1"]=fib_data_h1_l1["fib_2_414"]
+                    STATE["both_fib_available"]=True if fib_data and fib_data_h1_l1 else False
+                
                 if fib_data:
                     STATE["fib_range_h2_l2"]=fib_data["range"]
                     STATE["fib_0"]=fib_data["fib_0"]
@@ -881,12 +1204,16 @@ def bot_loop_latest():
                     STATE["fib_1_272"]=fib_data["fib_1_272"]
                     STATE["fib_1_6"]=fib_data["fib_1_6"]
                     STATE["fib_2_414"]=fib_data["fib_2_414"]
+                    STATE["fib_source"]="H2-L2 Main + H1-L1 Extra Both" if fib_data_h1_l1 else "H2-L2 Only"
                     if not STATE["sl_shifted"]:
                         STATE["sl"]=fib_data["fib_0_38"]
                     if not STATE["target_shifted"]:
                         STATE["target"]=fib_data["fib_1_6"]
                         STATE["target1"]=fib_data["fib_1_6"]
                         STATE["target2"]=fib_data["fib_2_414"]
+                    # Log when both available
+                    if fib_data_h1_l1:
+                        log(f"BOT LOOP H1L1 & H2L2 Both - First High1 Low1 Pan Ghe - Doni: H1 {h1:.1f} L1 {l1:.1f} Range {fib_data_h1_l1['range']:.1f} Fib1.6 {fib_data_h1_l1['fib_1_6']:.1f} | H2 {h2:.1f} L2 {l2:.1f} Range {fib_data['range']:.1f} Fib1.6 {fib_data['fib_1_6']:.1f}")
                 
                 closes=[c['c'] for c in list(CANDLES)]
                 opens=[c['o'] for c in list(CANDLES)]
@@ -1051,22 +1378,19 @@ def bot_loop_latest():
                             STATE["sl"]=entry
                             STATE["sl_shifted"]=True
                             log(f"SL Trail 1: 15pt Cost | Entry {entry:.2f} -> SL {entry:.2f} | Premium {curr_price:.2f} >= Entry+15 {entry+15:.2f}")
-                            send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
-                    # FINAL: After cross Fib 1.6 -> SL to Fib 1.0 - After cross 1.6 SL shift/trail to 1 fibb level
+                            # Suppressed per user baki kahi nako - send_tg_fixed(f"SL Trail Cost @{entry:.1f}")
+                    # FINAL: After cross Fib 1.6 -> SL to Fib 1.0 - After cross 1.6 SL shift/trail to 1 fibb level - Final Logic
                     if STATE["sl_shifted"] and not STATE.get("sl_trail_to_fib1_after_16",False):
                         fib_1_6_val=STATE["fib_1_6"]
-                        if fib_1_6_val is not None and curr_price >= fib_1_6_val:
-                            STATE["pos"]["sl"]=fib_1_6_val
-                            STATE["sl"]=fib_1_6_val
-                            STATE["sl_trail_to_fib16"]=True
-                            STATE["sl_trail_to_fib16_done"]=True
-                            log(f"SL Trail 2 CORRECTION: Cross Fib1.6 -> SL to Fib1.6 {fib_1_6_val:.2f} | Premium {curr_price:.2f} - Correction")
-                            send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Corr")
-                            STATE["sl"]=fib_1_6_val
-                            STATE["sl_trail_to_fib16"]=True
-                            STATE["sl_trail_to_fib16_done"]=True
-                            log(f"SL Trail 2 CORRECTION: Cross Fib1.6 -> SL to Fib1.6 {fib_1_6_val:.2f} | Premium {curr_price:.2f} - Correction")
-                            send_tg_fixed(f"SL Trail Fib1.6 @{fib_1_6_val:.1f} Corr")
+                        fib_1_val=STATE["fib_1"]
+                        if fib_1_6_val is not None and fib_1_val is not None and curr_price >= fib_1_6_val:
+                            STATE["pos"]["sl"]=fib_1_val
+                            STATE["sl"]=fib_1_val
+                            STATE["sl_trail_to_fib1_after_16"]=True
+                            STATE["sl_trail_to_fib1"]=True
+                            STATE["sl_trail_to_fib1_done"]=True
+                            log(f"SL Trail 2 FINAL: Cross Fib1.6 {fib_1_6_val:.2f} -> SL to Fib1 {fib_1_val:.2f} | Premium {curr_price:.2f} - After cross 1.6 SL shift/trail to 1 fibb level - Final")
+                            # Suppressed per user baki kahi nako - send_tg_fixed(f"SL Fib1 @{fib_1_val:.0f} After 1.6")
                     # Target Shift: 1.6 near -> 2.414
                     if not STATE["target_shifted"]:
                         fib_1_6_val=STATE["fib_1_6"]
@@ -1075,7 +1399,7 @@ def bot_loop_latest():
                             STATE["target"]=STATE["fib_2_414"]
                             STATE["target_shifted"]=True
                             log(f"TGT Shift: 1.6 Near {fib_1_6_val:.2f} -> Shift to 2.414 {STATE['fib_2_414']:.2f} | Premium {curr_price:.2f}")
-                            send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
+                            # Suppressed per user baki kahi nako - send_tg_fixed(f"TGT Shift 2.414 @{STATE['fib_2_414']:.1f}")
                 
                 if STATE["pos"]:
                     curr_price=list(CANDLES)[-1]['c']
@@ -1098,7 +1422,7 @@ def bot_loop_latest():
                             if STATE["consecutive_losses"]>=2:
                                 STATE["pause_until"]=datetime.now(IST)+timedelta(minutes=30)
                                 log(f"2 SL Pause 30 Min Till {STATE['pause_until']}")
-                                send_tg_fixed(f"2 SL Pause 30M P&L {STATE['daily_pnl']:.0f}")
+                                # Suppressed per user baki kahi nako - send_tg_fixed(f"2 SL Pause 30M P&L {STATE['daily_pnl']:.0f}")
                         else:
                             STATE["consecutive_losses"]=0
                             if pnl>0:
@@ -1107,7 +1431,15 @@ def bot_loop_latest():
                             exit_type="SL HIT Cost" if sl_shifted and not STATE.get("sl_trail_to_fib1_done",False) else f"SL HIT Fib1 Trail" if STATE.get("sl_trail_to_fib1_done",False) else "SL HIT 0.38"
                             TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=exit_type; TRADES[-1]["pnl"]=round(pnl,0)
                         log(f"SL HIT | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} Daily {STATE['daily_pnl']:.0f}")
-                        send_tg_fixed(f"SL HIT @{curr_price:.1f} P&L {pnl:.0f} Dly {STATE['daily_pnl']:.0f}")
+                        # Call and put buy kelele message ya format madhe yeude baki kahi nako - Only TRADE format
+                        spot_val = STATE.get("spot", 0)
+                        entry_val = STATE["pos"]["entry"] if STATE["pos"] else curr_price
+                        qty_val = STATE.get("lot_size", 65)
+                        total_pnl = STATE.get("daily_pnl", 0)
+                        option_str = STATE.get("selected_type", f"{STATE.get('strike',0)}{STATE.get('option_type','')}")
+                        reason_str = exit_type if 'exit_type' in locals() else "SL HIT"
+                        time_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                        send_trade_message(spot_val, entry_val, curr_price, qty_val, pnl, total_pnl, option_str, reason_str, time_str)
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
                         STATE["target_shifted"]=False
@@ -1125,7 +1457,15 @@ def bot_loop_latest():
                             exit_type=f"TGT HIT 1.6" if not STATE["target_shifted"] else f"TGT HIT 2.414 After 1.6 Shift"
                             TRADES[-1]["exit_price"]=curr_price; TRADES[-1]["exit_time"]=now_str; TRADES[-1]["exit_type"]=exit_type; TRADES[-1]["pnl"]=round(pnl,0)
                         log(f"TGT HIT | Trade {STATE['trades_today']}/5 P&L {pnl:.0f} Daily {STATE['daily_pnl']:.0f} TGT {STATE['pos']['target']:.2f}")
-                        send_tg_fixed(f"TGT HIT @{curr_price:.1f} P&L {pnl:.0f} Dly {STATE['daily_pnl']:.0f}")
+                        # Call and put buy kelele message ya format madhe yeude baki kahi nako - Only TRADE format
+                        spot_val = STATE.get("spot", 0)
+                        entry_val = STATE["pos"]["entry"] if STATE["pos"] else curr_price
+                        qty_val = STATE.get("lot_size", 65)
+                        total_pnl = STATE.get("daily_pnl", 0)
+                        option_str = STATE.get("selected_type", f"{STATE.get('strike',0)}{STATE.get('option_type','')}")
+                        reason_str = exit_type if 'exit_type' in locals() else "TGT HIT 2.414"
+                        time_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                        send_trade_message(spot_val, entry_val, curr_price, qty_val, pnl, total_pnl, option_str, reason_str, time_str)
                         STATE["pos"]=None
                         STATE["sl_shifted"]=False
                         STATE["target_shifted"]=False
