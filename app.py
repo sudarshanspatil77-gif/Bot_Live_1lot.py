@@ -676,7 +676,8 @@ def get_nse():
         # If ENABLE_LIVE_TRADING=False, force SIM even if Angel credentials present - For testing without live
         # If ENABLE_LIVE_TRADING=True or not set, try live if credentials present
         enable_live_env = os.getenv('ENABLE_LIVE_TRADING') or os.getenv('enable_live_trading') or os.getenv('ENABLE_LIVE') or os.getenv('LIVE_MODE')
-        if enable_live_env is not None:
+        # If env is empty string, treat as not set - Live Auto - Fix for Source SIM parat when user deleted but Render keeps empty var
+        if enable_live_env is not None and str(enable_live_env).strip()!='':
             enable_live_str = str(enable_live_env).strip().lower()
             if enable_live_str in ['false','0','no','off','disabled']:
                 log(f"ENABLE_LIVE_TRADING=False (ENV) - Forcing SIM Fallback - Live disabled by ENV - User set False for testing")
@@ -792,13 +793,46 @@ async function refresh(){
   document.getElementById('fib16').innerText=(j.fib_1_6||98.5).toFixed(2);
   document.getElementById('fib2414').innerText=(j.fib_2_414||117.99).toFixed(2);
   document.getElementById('fib038').innerText=(j.fib_0_38||70.82).toFixed(2);
-  document.getElementById('src_val').innerText=j.src||'SIM';
+  let srcEl=document.getElementById('src_val');
+  srcEl.innerText=j.src||'SIM';
+  if((j.src||'').includes('LIVE') || (j.src||'').includes('Angle One')){ srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; } else if((j.src||'').includes('SIM')){ srcEl.style.color='#f87171'; srcEl.style.fontWeight='bold'; }
   document.getElementById('tg_status').innerText=j.telegram_ok ? 'OK' : 'Fail/Not Set';
   let logEl=document.getElementById('log');
-  if(logEl && j.logs){logEl.innerText=j.logs.slice(-50).reverse().join('\n'); logEl.scrollTop=0;}
+  if(logEl && j.logs && j.logs.length>0){logEl.innerText=j.logs.slice(-50).reverse().join('\n'); logEl.scrollTop=0;}
+  else {
+    try{
+      let lr=await fetch('/api/logs?t='+Date.now()); let lj=await lr.json();
+      if(lj.logs && lj.logs.length>0){
+        document.getElementById('log').innerText='Backup from /api/logs:\n'+lj.logs.slice(-50).reverse().join('\n');
+        if(lj.src){ let s=document.getElementById('src_val'); s.innerText=lj.src+' (via /api/logs)'; if(lj.src.includes('LIVE')){ s.style.color='#22c55e'; } }
+      }
+    }catch(e2){}
+  }
   let tradesEl=document.getElementById('trades_hist');
   if(tradesEl && j.trades_history){tradesEl.innerText=JSON.stringify(j.trades_history.slice(-10), null, 2);}
- }catch(e){console.log('Refresh err',e); document.getElementById('log').innerText='Log load err: '+e;}
+ }catch(e){
+  console.log('Refresh err',e);
+  document.getElementById('log').innerText='Log load err: '+e+'\nTrying /api/logs backup...';
+  try{
+    let lr=await fetch('/api/logs?t='+Date.now()); let lj=await lr.json();
+    if(lj.logs && lj.logs.length>0){
+      document.getElementById('log').innerText='Backup logs from /api/logs (candles failed):\n'+lj.logs.slice(-50).reverse().join('\n');
+      if(lj.src) document.getElementById('src_val').innerText=lj.src+' (backup)';
+    }
+  }catch(e2){ document.getElementById('log').innerText='Both API failed: '+e+' | '+e2+'\nTry /logs and /api/logs directly'; }
+ }
+}
+async function refreshSrc(){
+ try{
+  let r=await fetch('/api/status?t='+Date.now()); let j=await r.json();
+  if(j.src){
+    let srcEl=document.getElementById('src_val');
+    if(!srcEl.innerText || srcEl.innerText.includes('SIM') || j.is_live){
+      srcEl.innerText=j.src+' (via status)';
+      if(j.is_live){ srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; }
+    }
+  }
+ }catch(e){}
 }
 async function testTelegram(){
  try{
@@ -808,6 +842,7 @@ async function testTelegram(){
  }catch(e){alert('Test err: '+e);}
 }
 refresh(); setInterval(refresh,3000);
+setInterval(refreshSrc,5000); refreshSrc();
 </script>
 </body></html>
 """
@@ -1222,6 +1257,40 @@ def debug_live():
         return f"Debug Live ERR {e}"
 
 
+
+@app.route('/api/logs')
+def api_logs():
+    try:
+        logs = list(LOGS)[-100:]
+        return jsonify({
+            "logs": logs,
+            "count": len(logs),
+            "trades": list(TRADES)[-10:],
+            "src": STATE.get("src","SIM"),
+            "spot": STATE.get("spot",0),
+            "prem": STATE.get("prem",0),
+            "trades_today": STATE.get("trades_today",0),
+            "daily_pnl": STATE.get("daily_pnl",0),
+            "telegram_ok": STATE.get("telegram_ok",False)
+        })
+    except Exception as e:
+        return jsonify({"logs": list(LOGS)[-20:], "error": str(e), "src": STATE.get("src","SIM")})
+
+@app.route('/api/status')
+def api_status():
+    try:
+        return jsonify({
+            "spot": STATE.get("spot",0),
+            "prem": STATE.get("prem",0),
+            "src": STATE.get("src","SIM"),
+            "telegram_ok": STATE.get("telegram_ok",False),
+            "trades_today": STATE.get("trades_today",0),
+            "logs_count": len(LOGS),
+            "last_logs": list(LOGS)[-5:],
+            "is_live": "LIVE" in STATE.get("src","") or "Angle One" in STATE.get("src","")
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 @app.route('/health')
 def health():
