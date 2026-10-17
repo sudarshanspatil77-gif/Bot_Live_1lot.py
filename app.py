@@ -730,24 +730,40 @@ for i in range(40):
     CANDLES.append({"o":o,"h":c+1.0,"l":c-1.0,"c":c,"t":f"09:{15+i:02d}","buy":False,"sell_sl":False,"sell_tgt":False})
 
 HTML = """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>200 EMA - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1</title>
+<title>200 EMA - Target 1.6 -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1 - Log Visible</title>
 <style>
 body{background:#0a0e1a;color:#e2e8f0;padding:8px;font-family:Arial;margin:0}
 .card{background:#151d2f;padding:12px;border-radius:14px;margin:10px 0;border:2px solid #2d3748}
 .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
 .box{background:#0f172a;padding:10px;border-radius:10px;border:1px solid #334155;text-align:center}
 .small{font-size:9px;color:#94a3b8}
+.logbox{background:#000;color:#00ff00;padding:10px;border-radius:10px;border:2px solid #22c55e;max-height:400px;overflow-y:auto;font-family:monospace;font-size:11px;white-space:pre-wrap}
+.btn{background:#22c55e;color:#000;padding:8px 12px;border-radius:8px;border:none;font-weight:bold;margin:4px;cursor:pointer}
+.btn2{background:#3b82f6;color:#fff;padding:8px 12px;border-radius:8px;border:none;font-weight:bold;margin:4px;cursor:pointer}
 </style></head><body>
-<h2 style="background:linear-gradient(90deg,#22c55e,#3b82f6);padding:12px;border-radius:12px;text-align:center">Target 1.6 Fib -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1 After Cross 1 Fib - 5F - 75-80% Win</h2>
+<h2 style="background:linear-gradient(90deg,#22c55e,#3b82f6);padding:12px;border-radius:12px;text-align:center">Target 1.6 Fib -> 2.414 Shift + SL 15pt Cost + SL Trail Fib1 After Cross 1 Fib - 5F - 75-80% Win - Log Visible</h2>
 <div class="card">
 <div>Open: <span id="open_price_val">22500</span> | Trend: <span id="trend_val">Bearish</span> | Selected: <span id="selected_option">22350PE</span></div>
 <div>Entry: <span id="entry_trail">76</span> | SL: <span id="sl_trail_status">70.82</span> | Target: <span id="tgt_p">98.5 -> 117.99</span></div>
 <div>Trades: <span id="trades">0/5</span> | P&L: <span id="pnl">Rs.0</span> | Daily: <span id="daily_pnl">0</span></div>
 <div>Fib 1: <span id="fib1">85.2</span> | Fib 1.6: <span id="fib16">98.5</span> | Fib 2.414: <span id="fib2414">117.99</span> | Fib 0.38 SL: <span id="fib038">70.82</span></div>
+<div>Source: <span id="src_val" style="color:#fbbf24">SIM</span> | Telegram: <span id="tg_status">Checking</span></div>
+<div style="margin-top:10px">
+<button class="btn" onclick="testTelegram()">Test Telegram - Log Option Kuthe Disat Nahi Fix</button>
+<button class="btn2" onclick="refresh()">Refresh Logs</button>
+<button class="btn2" onclick="window.open('/logs','_blank')">Open Full Logs Page /logs</button>
+<button class="btn2" onclick="window.open('/api/candles','_blank')">Open API JSON</button>
+</div>
 </div>
 <div class="card">
-<div>Auto Loaded - Target 1.6 Fib + Shift to 2.414 Near + SL 15pt Cost + SL Trail to Fib 1.0 After Cross 1 Fib - Market Opening Price Pasun 150pt Delta 0.30</div>
-<div id="log" style="font-size:10px;white-space:pre-wrap;max-height:200px;overflow-y:auto"></div>
+<div style="font-weight:bold;color:#22c55e;font-size:14px;margin-bottom:8px">📋 LOGS - Log Option Kuthe Disat Nahi - Ata Dista - Live Logs (Last 50):</div>
+<div>Auto Loaded - Target 1.6 Fib + Shift to 2.414 Near + SL 15pt Cost + SL Trail to Fib 1.0 After Cross 1 Fib - Market Opening Price Pasun 150pt Delta 0.30 - Old is Gold - Lot Size 65</div>
+<div id="log" class="logbox">Loading logs...</div>
+<div style="font-size:10px;color:#94a3b8;margin-top:8px">Log option kuthe disat nahi - Ata dakhvat aahe - /logs page var full logs + /api/candles madhe logs array</div>
+</div>
+<div class="card">
+<div style="font-weight:bold;color:#3b82f6">Trades History (Last 10):</div>
+<div id="trades_hist" style="font-size:11px;white-space:pre-wrap">Loading...</div>
 </div>
 <script>
 async function refresh(){
@@ -766,9 +782,20 @@ async function refresh(){
   document.getElementById('fib16').innerText=(j.fib_1_6||98.5).toFixed(2);
   document.getElementById('fib2414').innerText=(j.fib_2_414||117.99).toFixed(2);
   document.getElementById('fib038').innerText=(j.fib_0_38||70.82).toFixed(2);
+  document.getElementById('src_val').innerText=j.src||'SIM';
+  document.getElementById('tg_status').innerText=j.telegram_ok ? 'OK' : 'Fail/Not Set';
   let logEl=document.getElementById('log');
-  if(logEl && j.logs){logEl.innerText=j.logs.slice(-30).join('\n');}
- }catch(e){console.log('Refresh err',e);}
+  if(logEl && j.logs){logEl.innerText=j.logs.slice(-50).reverse().join('\n'); logEl.scrollTop=0;}
+  let tradesEl=document.getElementById('trades_hist');
+  if(tradesEl && j.trades_history){tradesEl.innerText=JSON.stringify(j.trades_history.slice(-10), null, 2);}
+ }catch(e){console.log('Refresh err',e); document.getElementById('log').innerText='Log load err: '+e;}
+}
+async function testTelegram(){
+ try{
+  let r=await fetch('/test_telegram?t='+Date.now()); let j=await r.json();
+  alert('Telegram Test: '+JSON.stringify(j));
+  refresh();
+ }catch(e){alert('Test err: '+e);}
 }
 refresh(); setInterval(refresh,3000);
 </script>
@@ -1088,6 +1115,25 @@ def api_candles():
         import traceback
         log(traceback.format_exc()[:300])
         return jsonify({"candles":list(CANDLES)[-20:],"trades_today":STATE["trades_today"],"error":str(e)}),200
+
+
+@app.route('/logs')
+def logs_page():
+    try:
+        logs = list(LOGS)[-200:]
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Logs - Log Option Kuthe Disat Nahi Fix</title><style>body{background:#000;color:#0f0;padding:10px;font-family:monospace;font-size:12px} .line{margin:2px 0;padding:2px;border-bottom:1px solid #222}</style></head><body><h2 style='color:#22c55e'>LOGS - Log Option Kuthe Disat Nahi - Ata Dista - Full Logs (Last 200)</h2><div style='margin:10px 0'><a href='/' style='color:#3b82f6'>Back to Home /</a> | <a href='/simple' style='color:#3b82f6'>Simple</a> | <a href='/test_telegram' style='color:#22c55e'>Test Telegram</a> | <a href='/api/candles' style='color:#fbbf24'>API JSON</a></div><div>"
+        for l in reversed(logs):
+            # Color code
+            color = "#0f0"
+            if "Fail" in l or "ERR" in l or "Missing" in l: color = "#f87171"
+            elif "OK" in l or "Live OK" in l: color = "#22c55e"
+            elif "BUY" in l or "TRADE" in l: color = "#fbbf24"
+            html += f"<div class='line' style='color:{color}'>{l}</div>"
+        html += "</div><div style='margin-top:20px;color:#94a3b8'>Auto refresh every 5 sec - Log option kuthe disat nahi - Ata /logs page var disat aahe</div><script>setTimeout(()=>location.reload(),5000);</script></body></html>"
+        return html
+    except Exception as e:
+        return f"Logs ERR {e} - {list(LOGS)[-10:]}"
+
 
 @app.route('/health')
 def health():
