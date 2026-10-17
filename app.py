@@ -857,6 +857,16 @@ def simple_page():
 @app.route('/api/candles')
 def api_candles():
     try:
+        # Fix: Update NSE LIVE check in API also - So dashboard shows LIVE not SIM - Saglikade OK dashboard var SIM fix - Market band asla tari LIVE
+        try:
+            spot_a, prem_a, strike_a, intr_a, tv_a, src_a = get_nse()
+            STATE["spot"]=round(spot_a,2)
+            STATE["prem"]=round(prem_a,2)
+            STATE["strike"]=strike_a
+            STATE["src"]=src_a
+        except Exception as e:
+            log(f"api_candles NSE ERR {e}")
+        
         is_open, market_msg, is_limit = is_market_open()
         clist = list(CANDLES)
         pivot_low_val, pivot_high_val = detect_pivots()
@@ -1261,6 +1271,14 @@ def debug_live():
 @app.route('/api/logs')
 def api_logs():
     try:
+        # Update LIVE check - Saglikade OK dashboard var SIM fix
+        try:
+            spot_l, prem_l, strike_l, intr_l, tv_l, src_l = get_nse()
+            STATE["spot"]=round(spot_l,2)
+            STATE["prem"]=round(prem_l,2)
+            STATE["src"]=src_l
+        except:
+            pass
         logs = list(LOGS)[-100:]
         return jsonify({
             "logs": logs,
@@ -1279,6 +1297,14 @@ def api_logs():
 @app.route('/api/status')
 def api_status():
     try:
+        # Update LIVE check - Saglikade OK dashboard var SIM fix
+        try:
+            spot_s, prem_s, strike_s, intr_s, tv_s, src_s = get_nse()
+            STATE["spot"]=round(spot_s,2)
+            STATE["prem"]=round(prem_s,2)
+            STATE["src"]=src_s
+        except:
+            pass
         return jsonify({
             "spot": STATE.get("spot",0),
             "prem": STATE.get("prem",0),
@@ -1370,8 +1396,20 @@ def bot_loop_latest():
             log(f"Bot Started already sent today {today_str}")
         while True:
             try:
+                # Fix: Call get_nse() even when market closed - So dashboard shows LIVE not SIM - Saglikade OK dashboard var SIM fix
+                try:
+                    spot_tmp, prem_tmp, strike_tmp, intr_tmp, tv_tmp, src_tmp = get_nse()
+                    STATE["spot"]=round(spot_tmp,2)
+                    STATE["prem"]=round(prem_tmp,2)
+                    STATE["strike"]=strike_tmp
+                    STATE["src"]=src_tmp
+                    log(f"Bot Loop NSE Check - Spot {spot_tmp:.0f} Prem {prem_tmp:.1f} Src {src_tmp[:80]} - Market band asla tari LIVE check - Saglikade OK dashboard var SIM fix")
+                except Exception as e:
+                    log(f"Bot Loop NSE Check ERR {e} - Using old STATE")
+                
                 is_open, market_msg, is_limit = is_market_open()
                 if not is_open:
+                    log(f"Market Closed - {market_msg} - Waiting 30 sec - Src {STATE.get('src','SIM')} - Market band asla tari LIVE asel jar credentials OK - Saglikade OK")
                     time.sleep(30)
                     continue
                 
