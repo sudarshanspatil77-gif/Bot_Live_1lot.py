@@ -465,6 +465,14 @@ def send_tg_fixed(text):
 
 def get_angle_one_session():
     try:
+        try:
+            import logzero
+        except ImportError:
+            pass
+        try:
+            import websocket
+        except ImportError:
+            pass
         from SmartApi import SmartConnect
         import pyotp
         def get_env(*keys):
