@@ -676,7 +676,6 @@ def get_nse():
         # If ENABLE_LIVE_TRADING=False, force SIM even if Angel credentials present - For testing without live
         # If ENABLE_LIVE_TRADING=True or not set, try live if credentials present
         enable_live_env = os.getenv('ENABLE_LIVE_TRADING') or os.getenv('enable_live_trading') or os.getenv('ENABLE_LIVE') or os.getenv('LIVE_MODE')
-        # If env is empty string, treat as not set - Live Auto - Fix for Source SIM parat when user deleted but Render keeps empty var
         if enable_live_env is not None and str(enable_live_env).strip()!='':
             enable_live_str = str(enable_live_env).strip().lower()
             if enable_live_str in ['false','0','no','off','disabled']:
@@ -793,9 +792,7 @@ async function refresh(){
   document.getElementById('fib16').innerText=(j.fib_1_6||98.5).toFixed(2);
   document.getElementById('fib2414').innerText=(j.fib_2_414||117.99).toFixed(2);
   document.getElementById('fib038').innerText=(j.fib_0_38||70.82).toFixed(2);
-  let srcEl=document.getElementById('src_val');
-  srcEl.innerText=j.src||'SIM';
-  if((j.src||'').includes('LIVE') || (j.src||'').includes('Angle One')){ srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; } else if((j.src||'').includes('SIM')){ srcEl.style.color='#f87171'; srcEl.style.fontWeight='bold'; }
+  let srcEl=document.getElementById('src_val'); srcEl.innerText=j.src||'SIM'; if((j.src||'').includes('LIVE')){ srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; } else if((j.src||'').includes('SIM')){ srcEl.style.color='#f87171'; srcEl.style.fontWeight='bold'; }
   document.getElementById('tg_status').innerText=j.telegram_ok ? 'OK' : 'Fail/Not Set';
   let logEl=document.getElementById('log');
   if(logEl && j.logs && j.logs.length>0){logEl.innerText=j.logs.slice(-50).reverse().join('\n'); logEl.scrollTop=0;}
@@ -803,36 +800,14 @@ async function refresh(){
     try{
       let lr=await fetch('/api/logs?t='+Date.now()); let lj=await lr.json();
       if(lj.logs && lj.logs.length>0){
-        document.getElementById('log').innerText='Backup from /api/logs:\n'+lj.logs.slice(-50).reverse().join('\n');
-        if(lj.src){ let s=document.getElementById('src_val'); s.innerText=lj.src+' (via /api/logs)'; if(lj.src.includes('LIVE')){ s.style.color='#22c55e'; } }
+        document.getElementById('log').innerText='Backup from /api/logs (candles had no logs - Market band asla tari logs):\n'+lj.logs.slice(-50).reverse().join('\n');
+        if(lj.src){ let s=document.getElementById('src_val'); s.innerText=lj.src+' (via /api/logs backup) - Market band tari LIVE!'; s.style.color=lj.src.includes('LIVE')?'#22c55e':'#f87171'; }
       }
     }catch(e2){}
   }
   let tradesEl=document.getElementById('trades_hist');
   if(tradesEl && j.trades_history){tradesEl.innerText=JSON.stringify(j.trades_history.slice(-10), null, 2);}
- }catch(e){
-  console.log('Refresh err',e);
-  document.getElementById('log').innerText='Log load err: '+e+'\nTrying /api/logs backup...';
-  try{
-    let lr=await fetch('/api/logs?t='+Date.now()); let lj=await lr.json();
-    if(lj.logs && lj.logs.length>0){
-      document.getElementById('log').innerText='Backup logs from /api/logs (candles failed):\n'+lj.logs.slice(-50).reverse().join('\n');
-      if(lj.src) document.getElementById('src_val').innerText=lj.src+' (backup)';
-    }
-  }catch(e2){ document.getElementById('log').innerText='Both API failed: '+e+' | '+e2+'\nTry /logs and /api/logs directly'; }
- }
-}
-async function refreshSrc(){
- try{
-  let r=await fetch('/api/status?t='+Date.now()); let j=await r.json();
-  if(j.src){
-    let srcEl=document.getElementById('src_val');
-    if(!srcEl.innerText || srcEl.innerText.includes('SIM') || j.is_live){
-      srcEl.innerText=j.src+' (via status)';
-      if(j.is_live){ srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; }
-    }
-  }
- }catch(e){}
+ }catch(e){console.log('Refresh err',e); document.getElementById('log').innerText='Log load err: '+e;}
 }
 async function testTelegram(){
  try{
@@ -842,6 +817,7 @@ async function testTelegram(){
  }catch(e){alert('Test err: '+e);}
 }
 refresh(); setInterval(refresh,3000);
+async function refreshSrc(){ try{ let r=await fetch('/api/status?t='+Date.now()); let j=await r.json(); let srcEl=document.getElementById('src_val'); if(j.src && (j.is_live || j.src.includes('LIVE'))){ srcEl.innerText=j.src+' (via /api/status - Market band tari LIVE)'; srcEl.style.color='#22c55e'; srcEl.style.fontWeight='bold'; } }catch(e){} }
 setInterval(refreshSrc,5000); refreshSrc();
 </script>
 </body></html>
@@ -1258,6 +1234,7 @@ def debug_live():
 
 
 
+
 @app.route('/api/logs')
 def api_logs():
     try:
@@ -1268,10 +1245,10 @@ def api_logs():
             "trades": list(TRADES)[-10:],
             "src": STATE.get("src","SIM"),
             "spot": STATE.get("spot",0),
-            "prem": STATE.get("prem",0),
             "trades_today": STATE.get("trades_today",0),
             "daily_pnl": STATE.get("daily_pnl",0),
-            "telegram_ok": STATE.get("telegram_ok",False)
+            "is_live": "LIVE" in STATE.get("src","") or "Angle One" in STATE.get("src",""),
+            "is_open": is_market_open()[0] if 'is_market_open' in globals() else False
         })
     except Exception as e:
         return jsonify({"logs": list(LOGS)[-20:], "error": str(e), "src": STATE.get("src","SIM")})
@@ -1283,14 +1260,89 @@ def api_status():
             "spot": STATE.get("spot",0),
             "prem": STATE.get("prem",0),
             "src": STATE.get("src","SIM"),
-            "telegram_ok": STATE.get("telegram_ok",False),
-            "trades_today": STATE.get("trades_today",0),
+            "is_live": "LIVE" in STATE.get("src","") or "Angle One" in STATE.get("src",""),
+            "telegram_ok": TELEGRAM_BOT_TOKEN is not None,
             "logs_count": len(LOGS),
             "last_logs": list(LOGS)[-5:],
-            "is_live": "LIVE" in STATE.get("src","") or "Angle One" in STATE.get("src","")
+            "trades_today": STATE.get("trades_today",0),
+            "is_open": is_market_open()[0] if 'is_market_open' in globals() else True
         })
     except Exception as e:
-        return jsonify({"error": str(e)})
+        return jsonify({"src": STATE.get("src","SIM"), "error": str(e)})
+
+@app.route('/debug/env')
+def debug_env():
+    try:
+        def check_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v: return True, k, len(v)
+                v=os.getenv(k.lower())
+                if v: return True, k.lower(), len(v)
+                v=os.getenv(k.upper())
+                if v: return True, k.upper(), len(v)
+            return False, keys[0], 0
+        results = {}
+        results['ANGEL_API_KEY'] = check_env('ANGEL_API_KEY','ANGELONE_API_KEY','SMARTAPI_API_KEY','angel_api_key','ANGLE_ONE_API_KEY')
+        results['ANGEL_CLIENT_ID'] = check_env('ANGEL_CLIENT_ID','ANGELONE_CLIENT_ID','CLIENT_ID','angel_client_id','ANGLE_ONE_CLIENT_ID','CLIENT_CODE')
+        results['ANGEL_PASSWORD'] = check_env('ANGEL_PASSWORD','ANGELONE_PASSWORD','angel_password')
+        results['ANGEL_TOTP_SECRET'] = check_env('ANGEL_TOTP_SECRET','ANGEL_TOTP','TOTP_SECRET','angel_totp_secret','ANGLE_ONE_TOTP_SECRET')
+        results['TELEGRAM_BOT_TOKEN'] = check_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        results['TELEGRAM_CHAT_ID'] = check_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        results['ENABLE_LIVE_TRADING'] = check_env('ENABLE_LIVE_TRADING','enable_live_trading','ENABLE_LIVE','LIVE_MODE')
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Debug ENV - Source SIM Parat</title><style>body{background:#0a0e1a;color:#e2e8f0;padding:20px;font-family:monospace} .ok{color:#22c55e} .fail{color:#f87171} .card{background:#151d2f;padding:15px;border-radius:10px;margin:10px 0;border:1px solid #2d3748}</style></head><body>"
+        html += "<h2 style='color:#22c55e'>Debug ENV Check - Source SIM Parat - ENV Set Aahe Ka?</h2>"
+        html += "<div><a href='/logs' style='color:#3b82f6'>Back to /logs</a> | <a href='/' style='color:#3b82f6'>Home</a> | <a href='/debug/live' style='color:#22c55e'>Debug Live</a></div>"
+        all_ok = True
+        for key, (exists, found_key, length) in results.items():
+            status = "OK" if exists else "MISSING"
+            color = "ok" if exists else "fail"
+            if "ENABLE_LIVE" in key:
+                if not exists:
+                    status = "OK - Not Set (Live Auto) - Delete Kela Correct!"
+                    color = "ok"
+                else:
+                    if length==0:
+                        status = "OK - Empty (Live Auto) - Delete Kela Correct!"
+                        color = "ok"
+                    else:
+                        status = f"Set ({found_key}) Length {length} - Should be DELETE for Live Auto! Length 4 means maybe true/TRUE/false?"
+                        color = "fail"
+            else:
+                if not exists:
+                    all_ok = False
+            html += f"<div class='card'><span class='{color}'>{key}: {status}</span> - Found Key: {found_key} Length: {length}</div>"
+        if all_ok:
+            html += "<div class='card' style='border-color:#22c55e'><span class='ok'>All ENV OK - Should be LIVE - Not SIM - If still SIM, check /debug/live for session fail reason - Market band asla tari LIVE asel!</span></div>"
+        else:
+            html += "<div class='card' style='border-color:#f87171'><span class='fail'>Some ENV MISSING - Will be SIM - Source SIM Parat Reason: Credentials Missing</span></div>"
+        html += "</body></html>"
+        return html
+    except Exception as e:
+        return f"Debug ENV ERR {e}"
+
+@app.route('/debug/live')
+def debug_live():
+    try:
+        obj, msg = get_angle_one_session()
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Debug Live - Source SIM Parat</title><style>body{background:#0a0e1a;color:#e2e8f0;padding:20px;font-family:monospace} .ok{color:#22c55e} .fail{color:#f87171} .card{background:#151d2f;padding:15px;border-radius:10px;margin:10px 0;border:1px solid #2d3748}</style></head><body>"
+        html += "<h2 style='color:#22c55e'>Debug Live Test - Source SIM Parat - Angel One Session Test</h2>"
+        html += "<div><a href='/logs' style='color:#3b82f6'>Back to /logs</a> | <a href='/debug/env' style='color:#3b82f6'>Debug ENV</a> | <a href='/' style='color:#3b82f6'>Home</a> | <a href='/api/status' style='color:#3b82f6'>API Status</a></div>"
+        if obj is None:
+            html += f"<div class='card' style='border-color:#f87171'><span class='fail'>Live FAIL -> SIM - Reason: {msg}</span></div>"
+        else:
+            html += f"<div class='card' style='border-color:#22c55e'><span class='ok'>Live OK! - {msg} - Source SHOULD be LIVE - Not SIM! - Market band asla tari LIVE!</span></div>"
+            try:
+                nifty_data = obj.ltpData("NSE", "NIFTY", "99926000")
+                spot = float(nifty_data['data']['ltp'])
+                html += f"<div class='card'><span class='ok'>NIFTY LTP OK: {spot:.2f} - Live Data Working! - Market band asla tari Last LTP deto!</span></div>"
+            except Exception as e:
+                html += f"<div class='card'><span class='fail'>NIFTY LTP Fail: {e}</span></div>"
+        html += "</body></html>"
+        return html
+    except Exception as e:
+        return f"Debug Live ERR {e}"
+
 
 @app.route('/health')
 def health():
