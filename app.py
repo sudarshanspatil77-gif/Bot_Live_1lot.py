@@ -663,7 +663,21 @@ def get_nse_sim_fallback():
 
 def get_nse():
     try:
-        # Try Angle One Live first - Live NIFTY + Option premium
+        # Check ENABLE_LIVE_TRADING ENV - User asked ENV Made he true karu ka live sathi
+        # If ENABLE_LIVE_TRADING=False, force SIM even if Angel credentials present - For testing without live
+        # If ENABLE_LIVE_TRADING=True or not set, try live if credentials present
+        enable_live_env = os.getenv('ENABLE_LIVE_TRADING') or os.getenv('enable_live_trading') or os.getenv('ENABLE_LIVE') or os.getenv('LIVE_MODE')
+        if enable_live_env is not None:
+            enable_live_str = str(enable_live_env).strip().lower()
+            if enable_live_str in ['false','0','no','off','disabled']:
+                log(f"ENABLE_LIVE_TRADING=False (ENV) - Forcing SIM Fallback - Live disabled by ENV - User set False for testing")
+                spot, prem, strike_sim, intr, tv, src = get_nse_sim_fallback()
+                return spot, prem, strike_sim, intr, tv, f"SIM Forced (ENABLE_LIVE_TRADING=False) {src}"
+            elif enable_live_str in ['true','1','yes','on','enabled']:
+                log(f"ENABLE_LIVE_TRADING=True (ENV) - Trying Live - Live enabled by ENV")
+            # else if empty or other value, try live
+        
+        # Try Angle One Live first - Live NIFTY + Option premium - Old is Gold
         live_result = get_nse_live_angle_one()
         if live_result[0] is not None:
             spot, prem, strike_sim, intr, tv, src = live_result
