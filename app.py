@@ -497,6 +497,7 @@ def get_nse_live_angle_one():
     try:
         obj, msg = get_angle_one_session()
         if obj is None:
+            log(f"Angle One Live Fail -> SIM: {msg[:200]}")
             return None, msg
         # NIFTY Spot LTP - NSE - Token 99926000
         try:
@@ -677,16 +678,17 @@ def get_nse():
                 log(f"ENABLE_LIVE_TRADING=True (ENV) - Trying Live - Live enabled by ENV")
             # else if empty or other value, try live
         
-        # Try Angle One Live first - Live NIFTY + Option premium - Old is Gold
+        # Try Angle One Live first - Live NIFTY + Option premium - Old is Gold - Source SIM KA Dakhavte fix
         live_result = get_nse_live_angle_one()
         if live_result[0] is not None:
             spot, prem, strike_sim, intr, tv, src = live_result
-            log(f"get_nse() -> Angle One Live OK Spot {spot:.0f} Prem {prem:.1f} {src[:80]}")
+            log(f"get_nse() -> Angle One Live OK Spot {spot:.0f} Prem {prem:.1f} {src[:80]} - Source LIVE - Not SIM")
             return spot, prem, strike_sim, intr, tv, src
         else:
-            # Live failed, log reason and use SIM fallback
+            # Live failed, log reason and use SIM fallback - Source SIM KA Dakhavte reason
             reason = live_result[1] if len(live_result)>1 else "Unknown"
-            log(f"get_nse() -> Angle One Live Fail {reason[:100]} - Using SIM Fallback")
+            log(f"get_nse() -> Angle One Live Fail {reason[:150]} - Using SIM Fallback - Source SIM KA Dakhavte: {reason[:100]} - Check ENV ANGEL_API_KEY, CLIENT_ID, PASSWORD, TOTP_SECRET")
+            log(f"Source SIM Reason: Angel Credentials Missing or Session Fail - Set ENV correctly - See /logs")
             spot, prem, strike_sim, intr, tv, src = get_nse_sim_fallback()
             return spot, prem, strike_sim, intr, tv, f"SIM Fallback (Angle One Fail: {reason[:50]}) {src}"
     except Exception as e:
