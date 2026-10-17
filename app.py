@@ -1123,18 +1123,96 @@ def api_candles():
 def logs_page():
     try:
         logs = list(LOGS)[-200:]
-        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Logs - Log Option Kuthe Disat Nahi Fix</title><style>body{background:#000;color:#0f0;padding:10px;font-family:monospace;font-size:12px} .line{margin:2px 0;padding:2px;border-bottom:1px solid #222}</style></head><body><h2 style='color:#22c55e'>LOGS - Log Option Kuthe Disat Nahi - Ata Dista - Full Logs (Last 200)</h2><div style='margin:10px 0'><a href='/' style='color:#3b82f6'>Back to Home /</a> | <a href='/simple' style='color:#3b82f6'>Simple</a> | <a href='/test_telegram' style='color:#22c55e'>Test Telegram</a> | <a href='/api/candles' style='color:#fbbf24'>API JSON</a></div><div>"
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Logs - Source SIM Parat Fix</title><style>body{background:#000;color:#0f0;padding:10px;font-family:monospace;font-size:12px} .line{margin:2px 0;padding:2px;border-bottom:1px solid #222}</style></head><body><h2 style='color:#22c55e'>LOGS - Source SIM Parat - Full Logs (Last 200) - Live Fail Reason</h2><div style='margin:10px 0'><a href='/' style='color:#3b82f6'>Back to Home /</a> | <a href='/simple' style='color:#3b82f6'>Simple</a> | <a href='/test_telegram' style='color:#22c55e'>Test Telegram</a> | <a href='/api/candles' style='color:#fbbf24'>API JSON</a> | <a href='/debug/env' style='color:#fbbf24'>Debug ENV Check</a> | <a href='/debug/live' style='color:#22c55e'>Debug Live Test</a></div><div>"
         for l in reversed(logs):
             # Color code
             color = "#0f0"
-            if "Fail" in l or "ERR" in l or "Missing" in l: color = "#f87171"
+            if "Fail" in l or "ERR" in l or "Missing" in l or "SIM" in l: color = "#f87171"
             elif "OK" in l or "Live OK" in l: color = "#22c55e"
             elif "BUY" in l or "TRADE" in l: color = "#fbbf24"
             html += f"<div class='line' style='color:{color}'>{l}</div>"
-        html += "</div><div style='margin-top:20px;color:#94a3b8'>Auto refresh every 5 sec - Log option kuthe disat nahi - Ata /logs page var disat aahe</div><script>setTimeout(()=>location.reload(),5000);</script></body></html>"
+        html += "</div><div style='margin-top:20px;color:#94a3b8'>Auto refresh every 5 sec - Source SIM Parat - Check Debug ENV + Debug Live</div><script>setTimeout(()=>location.reload(),5000);</script></body></html>"
         return html
     except Exception as e:
         return f"Logs ERR {e} - {list(LOGS)[-10:]}"
+
+@app.route('/debug/env')
+def debug_env():
+    try:
+        def check_env(*keys):
+            for k in keys:
+                v=os.getenv(k)
+                if v: return True, k, len(v)
+                v=os.getenv(k.lower())
+                if v: return True, k.lower(), len(v)
+                v=os.getenv(k.upper())
+                if v: return True, k.upper(), len(v)
+            return False, keys[0], 0
+        results = {}
+        results['ANGEL_API_KEY'] = check_env('ANGEL_API_KEY','ANGELONE_API_KEY','SMARTAPI_API_KEY','angel_api_key','ANGLE_ONE_API_KEY')
+        results['ANGEL_CLIENT_ID'] = check_env('ANGEL_CLIENT_ID','ANGELONE_CLIENT_ID','CLIENT_ID','angel_client_id','ANGLE_ONE_CLIENT_ID','CLIENT_CODE')
+        results['ANGEL_PASSWORD'] = check_env('ANGEL_PASSWORD','ANGELONE_PASSWORD','angel_password')
+        results['ANGEL_TOTP_SECRET'] = check_env('ANGEL_TOTP_SECRET','ANGEL_TOTP','TOTP_SECRET','angel_totp_secret','ANGLE_ONE_TOTP_SECRET')
+        results['TELEGRAM_BOT_TOKEN'] = check_env('TELEGRAM_BOT_TOKEN','telegram_bot_token')
+        results['TELEGRAM_CHAT_ID'] = check_env('TELEGRAM_CHAT_ID','telegram_chat_id')
+        results['ENABLE_LIVE_TRADING'] = check_env('ENABLE_LIVE_TRADING','enable_live_trading','ENABLE_LIVE','LIVE_MODE')
+        
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Debug ENV - Source SIM Parat</title><style>body{background:#0a0e1a;color:#e2e8f0;padding:20px;font-family:monospace} .ok{color:#22c55e} .fail{color:#f87171} .card{background:#151d2f;padding:15px;border-radius:10px;margin:10px 0;border:1px solid #2d3748}</style></head><body>"
+        html += "<h2 style='color:#22c55e'>Debug ENV Check - Source SIM Parat - ENV Set Aahe Ka?</h2>"
+        html += "<div><a href='/logs' style='color:#3b82f6'>Back to /logs</a> | <a href='/' style='color:#3b82f6'>Home</a></div>"
+        all_ok = True
+        for key, (exists, found_key, length) in results.items():
+            status = "OK" if exists else "MISSING"
+            color = "ok" if exists else "fail"
+            if "ENABLE_LIVE" in key:
+                # ENABLE_LIVE should be NOT SET for live (delete kela)
+                if not exists:
+                    status = "OK - Not Set (Live Auto) - Delete Kela Correct!"
+                    color = "ok"
+                else:
+                    status = f"Set ({found_key}) Length {length} - Should be DELETE for Live Auto!"
+                    color = "fail"
+                    all_ok = False
+            else:
+                if not exists:
+                    all_ok = False
+            html += f"<div class='card'><span class='{color}'>{key}: {status}</span> - Found Key: {found_key} Length: {length}</div>"
+        
+        if all_ok:
+            html += "<div class='card' style='border-color:#22c55e'><span class='ok'>All ENV OK - Should be LIVE - Not SIM - If still SIM, check /debug/live for session fail reason</span></div>"
+        else:
+            html += "<div class='card' style='border-color:#f87171'><span class='fail'>Some ENV MISSING - Will be SIM - Source SIM Parat Reason: Credentials Missing - Set missing ENV in Render -> Environment -> Save -> Deploy</span></div>"
+        
+        html += "<div class='card'><b>Fix for Source SIM:</b><br>1. Render -> Environment -> Check 4 Angel ENV set? API_KEY, CLIENT_ID, PASSWORD, TOTP_SECRET<br>2. TOTP_SECRET = 32 chars Base32 - No spaces - From Google Authenticator<br>3. API_KEY = 20-30 chars - From Angel One Developer Portal<br>4. CLIENT_ID = S123456 format<br>5. Save -> Auto Deploy -> Wait 2 min -> Check /logs -> Should be Live OK</div>"
+        html += "</body></html>"
+        return html
+    except Exception as e:
+        return f"Debug ENV ERR {e}"
+
+@app.route('/debug/live')
+def debug_live():
+    try:
+        obj, msg = get_angle_one_session()
+        html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Debug Live - Source SIM Parat</title><style>body{background:#0a0e1a;color:#e2e8f0;padding:20px;font-family:monospace} .ok{color:#22c55e} .fail{color:#f87171} .card{background:#151d2f;padding:15px;border-radius:10px;margin:10px 0;border:1px solid #2d3748}</style></head><body>"
+        html += "<h2 style='color:#22c55e'>Debug Live Test - Source SIM Parat - Angel One Session Test</h2>"
+        html += "<div><a href='/logs' style='color:#3b82f6'>Back to /logs</a> | <a href='/debug/env' style='color:#3b82f6'>Debug ENV</a> | <a href='/' style='color:#3b82f6'>Home</a></div>"
+        if obj is None:
+            html += f"<div class='card' style='border-color:#f87171'><span class='fail'>Live FAIL -> SIM - Reason: {msg}</span></div>"
+            html += f"<div class='card'><b>Reason Details:</b> {msg}<br><br><b>Common Fixes:</b><br>- Invalid TOTP: TOTP_SECRET wrong - Check Google Authenticator secret - 32 chars<br>- Invalid API Key: API_KEY wrong - Regenerate from Angel Developer Portal<br>- Invalid Client ID: CLIENT_ID wrong - Should be S123456<br>- Invalid Password: PASSWORD wrong - Not MPIN - Password<br>- SmartApi Not Installed: requirements.txt check - smartapi-python + pyotp</div>"
+        else:
+            html += f"<div class='card' style='border-color:#22c55e'><span class='ok'>Live OK! - {msg} - Source Should be LIVE - Not SIM!</span></div>"
+            # Try NIFTY LTP
+            try:
+                nifty_data = obj.ltpData("NSE", "NIFTY", "99926000")
+                spot = float(nifty_data['data']['ltp'])
+                html += f"<div class='card'><span class='ok'>NIFTY LTP OK: {spot:.2f} - Live Data Working!</span></div>"
+            except Exception as e:
+                html += f"<div class='card'><span class='fail'>NIFTY LTP Fail: {e} - Session OK but LTP fail</span></div>"
+        html += "</body></html>"
+        return html
+    except Exception as e:
+        return f"Debug Live ERR {e}"
+
 
 
 @app.route('/health')
